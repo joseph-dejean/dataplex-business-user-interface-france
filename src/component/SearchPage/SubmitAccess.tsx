@@ -1,11 +1,9 @@
 
 import React, { useEffect, useState } from 'react';
-import { Box, Typography, TextField, Button, IconButton, CircularProgress, Tooltip, FormControlLabel, Checkbox } from '@mui/material';
-import { ServiceNowService } from '../../services/ServiceNowService';
+import { Box, Typography, TextField, Button, IconButton, CircularProgress, Tooltip } from '@mui/material';
 import { Close } from '@mui/icons-material';
 import { useAuth } from '../../auth/AuthProvider';
 import { useSelector } from 'react-redux';
-import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { URLS } from '../../constants/urls';
 
@@ -62,9 +60,7 @@ interface SubmitAccessProps {
 }
 
 const SubmitAccess: React.FC<SubmitAccessProps> = ({ isOpen, onClose, assetName, entry, onSubmitSuccess, previewData, isLookup }) => {
-  const navigate = useNavigate();
   const [message, setMessage] = useState('');
-  const [createTicket, setCreateTicket] = useState(ServiceNowService.isConfigured());
 
 
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -145,7 +141,7 @@ const SubmitAccess: React.FC<SubmitAccessProps> = ({ isOpen, onClose, assetName,
         requesterEmail: user.email,
         projectId: import.meta.env.VITE_GOOGLE_PROJECT_ID,
         projectAdmin: contactEmails, // Even if empty, let backend handle it
-        createServiceNowTicket: createTicket
+        createServiceNowTicket: true
       }, {
         headers: {
           'Content-Type': 'application/json',
@@ -506,40 +502,6 @@ const SubmitAccess: React.FC<SubmitAccessProps> = ({ isOpen, onClose, assetName,
               }
             }}
           />
-
-
-
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={createTicket}
-                  onChange={(e) => setCreateTicket(e.target.checked)}
-                  color="primary"
-                  disabled={!ServiceNowService.isConfigured()}
-                />
-              }
-              label={
-                <Typography sx={{ fontSize: '14px', color: ServiceNowService.isConfigured() ? '#1F1F1F' : '#9AA0A6' }}>
-                  Create a ServiceNow Ticket
-                </Typography>
-              }
-            />
-            {!ServiceNowService.isConfigured() && (
-              <Typography
-                onClick={() => { onClose(); navigate('/settings'); }}
-                sx={{
-                  fontSize: '12px',
-                  color: '#0E4DCA',
-                  cursor: 'pointer',
-                  textDecoration: 'underline',
-                  '&:hover': { color: '#0B3DA8' }
-                }}
-              >
-                Configure in Settings
-              </Typography>
-            )}
-          </Box>
         </Box>
       </Box>
 
@@ -595,7 +557,7 @@ const SubmitAccess: React.FC<SubmitAccessProps> = ({ isOpen, onClose, assetName,
           </Button>
         </Tooltip>
       </Box>
-    </Box>
+    </Box >
   ) : (<>
     <CircularProgress />
   </>);
