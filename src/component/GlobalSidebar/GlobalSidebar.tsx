@@ -1,6 +1,6 @@
 import React from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Search, ChatBubbleOutline, Assignment, Settings as SettingsIcon } from '@mui/icons-material';
+import { Search, ChatBubbleOutline, Assignment } from '@mui/icons-material';
 import SidebarMenuItem from './SidebarMenuItem';
 import { useAccessRequest } from '../../contexts/AccessRequestContext';
 import './GlobalSidebar.css';
@@ -101,13 +101,6 @@ const GlobalSidebar: React.FC<GlobalSidebarProps> = ({ isHomePage = false }) => 
           onClick={() => navigate('/access-requests')}
         />
 
-        {/* Settings */}
-        <SidebarMenuItem
-          icon={<SettingsIcon sx={{ fontSize: 20, color: location.pathname === '/settings' ? '#0E4DCA' : '#5F6368' }} />}
-          label="Settings"
-          isActive={location.pathname === '/settings'}
-          onClick={() => navigate('/settings')}
-        />
       </div>
 
       {/* Browse Popover */}
