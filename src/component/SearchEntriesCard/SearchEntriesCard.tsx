@@ -242,21 +242,33 @@ const SearchEntriesCard: React.FC<SearchEntriesCardProps> = ({ entry, sx, isSele
     // SearchResult has: linkedResource, relativeResourceName, integratedSystem, modifyTime
     // Dataplex Entry has: entrySource, entryType, updateTime
 
-    let calculatedName = '';
+    let baseName = '';
     const entrySource = entry?.entrySource || {};
 
     // Check for SearchResult displayName or fallback to parsing name
     if (entry.displayName) {
-      calculatedName = entry.displayName;
+      baseName = entry.displayName;
     } else if (entrySource.displayName && entrySource.displayName.length > 0) {
-      calculatedName = entrySource.displayName;
+      baseName = entrySource.displayName;
     } else if (entry.name) {
       const segments = entry.name.split('/');
-      calculatedName = segments[segments.length - 1];
+      baseName = segments[segments.length - 1];
     } else if (entry.linkedResource) {
       // Fallback for SearchResult: parse from linkedResource
       const segments = entry.linkedResource.split('/');
-      calculatedName = segments[segments.length - 1];
+      baseName = segments[segments.length - 1];
+    }
+
+    let calculatedName = baseName;
+    const resourcePath = entry.linkedResource || entry.relativeResourceName || entry.name || '';
+    if (resourcePath.includes('/datasets/')) {
+      const parts = resourcePath.split('/datasets/');
+      if (parts.length > 1) {
+        const datasetName = parts[1].split('/')[0];
+        if (datasetName && !baseName.startsWith(datasetName + '.')) {
+          calculatedName = `${datasetName}.${baseName}`;
+        }
+      }
     }
 
     setName(calculatedName);
