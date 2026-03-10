@@ -583,17 +583,16 @@ app.post('/api/v1/chat', async (req, res) => {
                   const columns = Object.keys(dataRows[0]);
 
                   // Smart column detection: find numeric vs categorical columns
-                  const numericCols = columns.filter(c => {
-                    const vals = dataRows.slice(0, 5).map(r => r[c]);
-                    return vals.every(v => v !== null && v !== undefined && !isNaN(parseFloat(v)));
-                  });
-                  const categoricalCols = columns.filter(c => !numericCols.includes(c));
+                  // Classify columns properly: dates, numbers, IDs, categories
+                  const isDateLike = (col) => dataRows.slice(0, 5).every(r => /^\d{4}-\d{2}-\d{2}/.test(String(r[col] || '')));
+                  const isIdLike = (col) => /^(id|.*_id|.*_code)$/i.test(col) || dataRows.slice(0, 5).every(r => /^[A-Z]{2,}-\d+$/.test(String(r[col] || '')));
+                  const isNumericLike = (col) => !isDateLike(col) && !isIdLike(col) && dataRows.slice(0, 5).every(r => r[col] !== null && r[col] !== undefined && !isNaN(Number(r[col])));
 
-                  // Pick best X (categorical) and Y (numeric) based on data semantics
-                  const xField = categoricalCols.length > 0 ? categoricalCols[0] : columns[0];
-                  const yField = numericCols.length > 0
-                    ? (numericCols.find(c => c !== xField) || numericCols[0])
-                    : (columns.find(c => c !== xField) || columns[columns.length > 1 ? 1 : 0]);
+                  const dateCols = columns.filter(isDateLike);
+                  const numericCols = columns.filter(isNumericLike);
+                  const categoricalCols = columns.filter(c => !dateCols.includes(c) && !numericCols.includes(c) && !isIdLike(c));
+
+                  console.log('DEBUG_COL_CLASSIFICATION:', JSON.stringify({ dateCols, numericCols, categoricalCols, idCols: columns.filter(isIdLike) }));
 
                   // Determine mark type from Google's chartType
                   let markType = 'bar';
@@ -602,30 +601,52 @@ app.post('/api/v1/chat', async (req, res) => {
                   else if (chartData.chartType.toLowerCase().includes('scatter')) markType = 'point';
                   else if (chartData.chartType.toLowerCase().includes('area')) markType = 'area';
 
-                  // Detect if X is temporal (date-like)
-                  const xType = categoricalCols.includes(xField) ? 'nominal' : 'quantitative';
-
-                  vegaSpec = {
-                    "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-                    "data": { "values": dataRows },
-                    "mark": markType,
-                    "encoding": {
-                      "x": { "field": xField, "type": xType, "title": xField },
-                      "y": { "field": yField, "type": "quantitative", "title": yField }
-                    },
-                    "width": 400,
-                    "height": 300
-                  };
-
-                  // For pie charts, adjust encoding
-                  if (markType === 'arc') {
-                    vegaSpec.encoding = {
-                      "theta": { "field": yField, "type": "quantitative" },
-                      "color": { "field": xField, "type": "nominal" }
+                  // Build chart based on available column types
+                  if (numericCols.length > 0 && categoricalCols.length > 0) {
+                    // Category vs Number
+                    vegaSpec = {
+                      "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+                      "data": { "values": dataRows },
+                      "mark": markType === 'arc' ? 'arc' : markType,
+                      "encoding": {
+                        "x": { "field": categoricalCols[0], "type": "nominal", "title": categoricalCols[0], "sort": "-y" },
+                        "y": { "field": numericCols[0], "type": "quantitative", "title": numericCols[0] }
+                      },
+                      "width": 400, "height": 300
                     };
+                  } else if (numericCols.length > 0 && dateCols.length > 0) {
+                    // Date vs Number → line chart
+                    vegaSpec = {
+                      "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+                      "data": { "values": dataRows },
+                      "mark": "line",
+                      "encoding": {
+                        "x": { "field": dateCols[0], "type": "temporal", "title": dateCols[0] },
+                        "y": { "field": numericCols[0], "type": "quantitative", "title": numericCols[0] }
+                      },
+                      "width": 400, "height": 300
+                    };
+                  } else if (dateCols.length > 0 && categoricalCols.length > 0) {
+                    // Timeline: dates vs categories → no good chart, skip
+                    console.log('[ChartBuilder] Date + category only, skipping chart');
+                  } else {
+                    console.log('[ChartBuilder] No suitable column combination for chart');
                   }
 
-                  console.log('DEBUG_BUILT_VEGA_SPEC:', JSON.stringify(vegaSpec, null, 2).substring(0, 300));
+                  // For pie charts, adjust encoding
+                  if (vegaSpec && markType === 'arc' && numericCols.length > 0) {
+                    const colorField = categoricalCols[0] || columns.find(c => c !== numericCols[0]) || columns[0];
+                    vegaSpec.encoding = {
+                      "theta": { "field": numericCols[0], "type": "quantitative" },
+                      "color": { "field": colorField, "type": "nominal" }
+                    };
+                    delete vegaSpec.width;
+                    delete vegaSpec.height;
+                  }
+
+                  if (vegaSpec) {
+                    console.log('DEBUG_BUILT_VEGA_SPEC:', JSON.stringify(vegaSpec, null, 2).substring(0, 300));
+                  }
                 }
               }
 
@@ -798,6 +819,20 @@ app.post('/api/v1/chat', async (req, res) => {
       try {
         const columns = Object.keys(rawDataRows[0]);
         const sampleRows = rawDataRows.slice(0, 5);
+
+        // Classify each column by type to help Gemini and fallback
+        const columnTypes = {};
+        columns.forEach(col => {
+          const sampleVals = rawDataRows.slice(0, 10).map(r => r[col]).filter(v => v != null && v !== '');
+          const isDate = sampleVals.every(v => /^\d{4}-\d{2}-\d{2}/.test(String(v)));
+          const isNumeric = sampleVals.every(v => !isNaN(Number(v)) && !/^\d{4}-\d{2}/.test(String(v)));
+          const isId = /^(id|.*_id|.*_code|emp.*)$/i.test(col) || sampleVals.every(v => /^[A-Z]{2,}-\d+$/.test(String(v)));
+          if (isDate) columnTypes[col] = 'temporal';
+          else if (isNumeric && !isId) columnTypes[col] = 'quantitative';
+          else columnTypes[col] = 'nominal';
+        });
+
+        console.log('[SmartChart] Column types detected:', JSON.stringify(columnTypes));
         console.log('[SmartChart] Asking Gemini to generate chart spec...');
 
         const chartGenLocation = (process.env.GCP_LOCATION && process.env.GCP_LOCATION.includes('-')) ? process.env.GCP_LOCATION : 'europe-west1';
@@ -807,20 +842,28 @@ app.post('/api/v1/chat', async (req, res) => {
           generationConfig: { temperature: 0.1, maxOutputTokens: 1024 }
         });
 
-        const chartPrompt = `You are a data visualization expert. Given a user's question and query results, generate the best Vega-Lite v5 chart specification.
+        const chartPrompt = `You are a data visualization expert. Given a user's question and query results, generate the BEST Vega-Lite v5 chart specification.
 
 User question: "${message}"
-Columns available: ${JSON.stringify(columns)}
+Columns and their detected types: ${JSON.stringify(columnTypes)}
 Sample data (first 5 rows): ${JSON.stringify(sampleRows)}
 Total rows: ${rawDataRows.length}
 
-Rules:
-1. Pick the most relevant columns for the visualization based on the user's question.
-2. Choose the best chart type (bar, line, point, arc, area) for this data.
-3. Use "nominal" for categorical text fields, "quantitative" for numbers, "temporal" for dates.
-4. Do NOT include the data values — I will inject them. Set "data": {"values": []} as placeholder.
-5. Set width to 500 and height to 300.
-6. Return ONLY a valid JSON object (no markdown, no explanation, no code fences).`;
+CRITICAL RULES:
+1. THINK about what visualization makes sense for this data and question. Not everything needs a bar chart!
+   - Dates/time series → use "line" chart with temporal X axis
+   - Comparisons of amounts → use "bar" chart
+   - Distribution/scatter → use "point" chart
+   - Proportions → use "arc" (pie/donut) chart
+   - Ranking/top-N lists with no clear numeric metric → RETURN null (no chart needed)
+2. NEVER plot date columns as quantitative (numbers). Dates MUST use "temporal" type.
+3. NEVER plot ID columns (emp_id, user_id, order_id, etc.) as a meaningful axis. They are identifiers, not data.
+4. If the data is a simple list/table (e.g., top employees with names and dates), a chart may NOT add value. Return the JSON string "null" if no chart is appropriate.
+5. Use "nominal" for categories, "quantitative" for numbers, "temporal" for dates.
+6. Do NOT include data values — set "data": {"values": []} as placeholder.
+7. Set width to 500 and height to 300.
+8. Add meaningful axis titles and a chart title.
+9. Return ONLY a valid JSON object OR the string null. No markdown, no explanation, no code fences.`;
 
         const chartResult = await chartModel.generateContent(chartPrompt);
         let chartSpecText = chartResult.response.candidates[0].content.parts[0].text.trim();
@@ -830,45 +873,81 @@ Rules:
           chartSpecText = chartSpecText.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
         }
 
-        const firstBrace = chartSpecText.indexOf('{');
-        const lastBrace = chartSpecText.lastIndexOf('}');
-        if (firstBrace !== -1 && lastBrace !== -1) {
-          chartSpecText = chartSpecText.substring(firstBrace, lastBrace + 1);
+        // Check if Gemini decided no chart is appropriate
+        if (chartSpecText === 'null' || chartSpecText === '"null"' || chartSpecText.toLowerCase() === 'none') {
+          console.log('[SmartChart] Gemini decided no chart is appropriate for this data');
+          // No chart — that's fine
+        } else {
+          const firstBrace = chartSpecText.indexOf('{');
+          const lastBrace = chartSpecText.lastIndexOf('}');
+          if (firstBrace !== -1 && lastBrace !== -1) {
+            chartSpecText = chartSpecText.substring(firstBrace, lastBrace + 1);
+          }
+
+          const smartSpec = JSON.parse(chartSpecText);
+
+          // Validate: reject specs that use dates as quantitative
+          const encodings = smartSpec.encoding || {};
+          let hasInvalidEncoding = false;
+          Object.values(encodings).forEach((enc) => {
+            if (enc.field && columnTypes[enc.field] === 'temporal' && enc.type === 'quantitative') {
+              console.warn(`[SmartChart] Rejecting: Gemini used temporal column "${enc.field}" as quantitative`);
+              hasInvalidEncoding = true;
+            }
+          });
+
+          if (!hasInvalidEncoding) {
+            // Inject actual data
+            smartSpec.data = { values: rawDataRows };
+            if (!smartSpec.$schema) {
+              smartSpec.$schema = "https://vega.github.io/schema/vega-lite/v5.json";
+            }
+            finalChart = smartSpec;
+            console.log('[SmartChart] Gemini-generated chart spec applied:', smartSpec.mark);
+          }
         }
-
-        const smartSpec = JSON.parse(chartSpecText);
-
-        // Inject actual data (Gemini only provided the spec structure)
-        smartSpec.data = { values: rawDataRows };
-        if (!smartSpec.$schema) {
-          smartSpec.$schema = "https://vega.github.io/schema/vega-lite/v5.json";
-        }
-
-        finalChart = smartSpec;
-        console.log('[SmartChart] Gemini-generated chart spec applied');
       } catch (chartErr) {
-        console.warn('[SmartChart] Gemini chart generation failed, using simple fallback:', chartErr.message);
-        // Simple fallback: first text column = X, first numeric column = Y
+        console.warn('[SmartChart] Gemini chart generation failed:', chartErr.message);
+        // Smart fallback: only generate a chart if we have a true numeric column
         try {
           const columns = Object.keys(rawDataRows[0]);
-          const numericCol = columns.find(c => {
-            const val = rawDataRows[0][c];
-            return !isNaN(parseFloat(val)) && columns.indexOf(c) > 0;
-          }) || columns.find(c => !isNaN(parseFloat(rawDataRows[0][c])));
-          const labelCol = columns.find(c => c !== numericCol) || columns[0];
 
-          if (numericCol && labelCol) {
+          // Detect column types properly
+          const isDateCol = (col) => rawDataRows.slice(0, 5).every(r => /^\d{4}-\d{2}-\d{2}/.test(String(r[col] || '')));
+          const isIdCol = (col) => /^(id|.*_id|.*_code)$/i.test(col) || rawDataRows.slice(0, 5).every(r => /^[A-Z]{2,}-\d+$/.test(String(r[col] || '')));
+          const isNumericCol = (col) => !isDateCol(col) && !isIdCol(col) && rawDataRows.slice(0, 5).every(r => !isNaN(Number(r[col])));
+
+          const numericCols = columns.filter(isNumericCol);
+          const dateCols = columns.filter(isDateCol);
+          const categoryCols = columns.filter(c => !isDateCol(c) && !isNumericCol(c) && !isIdCol(c));
+
+          if (numericCols.length > 0 && categoryCols.length > 0) {
+            // Bar chart: category vs number
             finalChart = {
               "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-              "data": { "values": rawDataRows.map(r => ({ [labelCol]: r[labelCol], [numericCol]: parseFloat(r[numericCol]) || 0 })) },
+              "data": { "values": rawDataRows },
               "mark": "bar",
               "encoding": {
-                "x": { "field": labelCol, "type": "nominal", "title": labelCol, "sort": "-y" },
-                "y": { "field": numericCol, "type": "quantitative", "title": numericCol }
+                "x": { "field": categoryCols[0], "type": "nominal", "title": categoryCols[0], "sort": "-y" },
+                "y": { "field": numericCols[0], "type": "quantitative", "title": numericCols[0] }
               },
-              "width": 500,
-              "height": 300
+              "width": 500, "height": 300
             };
+          } else if (numericCols.length > 0 && dateCols.length > 0) {
+            // Line chart: date vs number
+            finalChart = {
+              "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+              "data": { "values": rawDataRows },
+              "mark": "line",
+              "encoding": {
+                "x": { "field": dateCols[0], "type": "temporal", "title": dateCols[0] },
+                "y": { "field": numericCols[0], "type": "quantitative", "title": numericCols[0] }
+              },
+              "width": 500, "height": 300
+            };
+          } else {
+            console.log('[SmartChart] No suitable columns for chart — skipping');
+            // No chart: data is just a list (IDs, names, dates) — no meaningful numeric axis
           }
         } catch (fallbackErr) {
           console.warn('[SmartChart] Fallback also failed:', fallbackErr.message);
