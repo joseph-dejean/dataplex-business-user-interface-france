@@ -3070,11 +3070,11 @@ const checkUserAdminRole = async (userEmail) => {
  */
 app.post('/api/v1/search', async (req, res) => {
   try {
-    const { query, pageSize, pageToken } = req.body;
+    const { query, pageSize, pageToken, semanticSearch } = req.body;
     const userEmail = req.headers['x-user-email'];
 
     console.log('======== [SEARCH START] ========');
-    console.log(`[SEARCH] Query: ${query}, User: ${userEmail}`);
+    console.log(`[SEARCH] Query: ${query}, User: ${userEmail}, SemanticSearch: ${semanticSearch}`);
 
     // Check Admin Status (Real IAM Check)
     const isAdmin = await checkUserAdminRole(userEmail);
@@ -3097,15 +3097,107 @@ app.post('/api/v1/search', async (req, res) => {
 
     console.log(`[SEARCH] Using Project: ${projectId}, Location: ${location}`);
 
+    let searchQuery = query || '*';
+    let intent = '';
+    let searchTerms = [];
+
+    // --- AI SEMANTIC SEARCH TRANSLATION ---
+    if (semanticSearch && query && query.trim().length >= 2) {
+      try {
+        const vertex_ai = new VertexAI({
+          project: projectId,
+          location: process.env.GCP_LOCATION || 'europe-west1'
+        });
+        const generativeModel = vertex_ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+        const aiPrompt = `You are a data catalog search assistant. Given a user's natural language query, extract the key search terms and concepts that would help find relevant database tables or datasets.
+
+User Query: "${query}"
+
+Analyze the query and return a JSON object with:
+1. "searchTerms": array of individual keywords to search for (lowercase, no special characters)
+2. "dataplexQuery": a search query string optimized for Dataplex/Data Catalog search
+3. "intent": what the user is looking for (e.g., "customer data", "sales metrics", "order history")
+4. "suggestedFilters": any filters to apply (e.g., entryType, system)
+
+Return ONLY valid JSON, no markdown or explanations.
+Example output: {"searchTerms":["customer","orders","purchase"],"dataplexQuery":"customer orders purchase","intent":"customer order data","suggestedFilters":{}}`;
+
+        const aiResult = await generativeModel.generateContent(aiPrompt);
+        const aiResponseText = aiResult.response.candidates[0].content.parts[0].text.trim();
+
+        let searchConfig;
+        try {
+          let cleanJson = aiResponseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+          searchConfig = JSON.parse(cleanJson);
+        } catch (parseError) {
+          console.error('[SEARCH] AI response parse error:', parseError);
+          searchConfig = {
+            searchTerms: query.toLowerCase().split(/\s+/).filter(t => t.length > 2),
+            dataplexQuery: query,
+            intent: query,
+            suggestedFilters: {}
+          };
+        }
+
+        console.log('[SEARCH] AI Search Config:', searchConfig);
+        searchQuery = searchConfig.dataplexQuery || query;
+        intent = searchConfig.intent || '';
+        searchTerms = searchConfig.searchTerms || [];
+      } catch (aiError) {
+        console.error('[SEARCH] Vertex AI semantic search translation error:', aiError);
+      }
+    }
+
     const request = {
       name: `projects/${projectId}/locations/${location}`,
-      query: query || '*',
-      pageSize: pageSize || 20,
+      query: searchQuery,
+      pageSize: semanticSearch ? 100 : (pageSize || 20),
       pageToken: pageToken
     };
 
-    const [searchResults, searchRequest, searchResponse] = await client.searchEntries(request);
+    let [searchResults, searchRequest, searchResponse] = await client.searchEntries(request);
     console.log(`[SEARCH] Fetched ${searchResults ? searchResults.length : 0} results from Data Catalog`);
+
+    // --- AI RANKING LOGIC ---
+    if (semanticSearch && searchResults && searchResults.length > 0 && intent) {
+      try {
+        const vertex_ai = new VertexAI({
+          project: projectId,
+          location: process.env.GCP_LOCATION || 'europe-west1'
+        });
+        const generativeModel = vertex_ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+        const rankPrompt = `Given the user's search intent: "${intent}"
+
+Rank these data entries by relevance (most relevant first). Return a JSON array of indices in order of relevance.
+
+Entries:
+${searchResults.slice(0, 15).map((r, i) => {
+          const entry = r.dataplexEntry || r;
+          return `${i}. Name: ${entry.entrySource?.displayName || entry.name?.split('/').pop() || 'Unknown'}
+ Description: ${entry.entrySource?.description || 'No description'}
+ Type: ${entry.entryType || 'Unknown'}`;
+        }).join('\n')}
+
+Return ONLY a JSON array of indices like [2,0,5,1,3,4,...], no explanation.`;
+
+        const rankResult = await generativeModel.generateContent(rankPrompt);
+        const rankText = rankResult.response.candidates[0].content.parts[0].text.trim();
+        const cleanRankJson = rankText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+        const rankedIndices = JSON.parse(cleanRankJson);
+
+        if (Array.isArray(rankedIndices)) {
+          const rankedResults = rankedIndices
+            .filter(i => i >= 0 && i < searchResults.length)
+            .map(i => searchResults[i]);
+          const unrankedResults = searchResults.filter((_, i) => !rankedIndices.includes(i));
+          searchResults = [...rankedResults, ...unrankedResults];
+        }
+      } catch (rankError) {
+        console.log('[SEARCH] Ranking failed, using original order:', rankError.message);
+      }
+    }
 
 
     // Helper for data normalization (used in all access paths) - as requested
@@ -3965,7 +4057,7 @@ app.post('/api/v1/access-request', async (req, res) => {
 
     // Create access request object (with placeholder for ServiceNow)
     const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    let snTicket = { number: '', sys_id: '' };
+    let snTicket = { number: '', sys_id: '', state: '', link: '' };
     if (req.body.createServiceNowTicket !== false) {
       try {
         console.log('[ACCESS-REQUEST] Creating ServiceNow ticket...');
@@ -3973,9 +4065,12 @@ app.post('/api/v1/access-request', async (req, res) => {
           requestId,
           requesterEmail,
           assetName,
+          assetType: assetType || 'BigQuery Table',
+          projectId,
+          projectAdmin: projectAdmin || [],
           message: message || 'Access Request via Dataplex UI'
         });
-        console.log('[ACCESS-REQUEST] ServiceNow ticket created:', snTicket.number);
+        console.log('[ACCESS-REQUEST] ServiceNow ticket created:', snTicket.number, 'State:', snTicket.state);
       } catch (snErr) {
         console.warn('[ACCESS-REQUEST] ServiceNow integration failed, continuing without ticket:', snErr.message);
       }
@@ -3995,7 +4090,9 @@ app.post('/api/v1/access-request', async (req, res) => {
       status: 'pending',
       autoApproved: false,
       serviceNowTicket: snTicket.number,
-      serviceNowSysId: snTicket.sys_id
+      serviceNowSysId: snTicket.sys_id,
+      serviceNowState: snTicket.state || '',
+      serviceNowLink: snTicket.link || ''
     };
 
     // Store the request in Firestore
@@ -4192,22 +4289,22 @@ app.post('/api/v1/access-request/update', async (req, res) => {
         effectiveStatus = 'PARTIALLY_APPROVED';
         console.log(`[UPDATE] Partial Approval (${currentApprovals.length}/${threshold}) by ${reviewerEmail}. Status set to PARTIALLY_APPROVED.`);
         if (originalRequest.serviceNowSysId) {
-          serviceNowService.addComment(originalRequest.serviceNowSysId, `Partial Approval (${currentApprovals.length}/${threshold}) by ${reviewerEmail}. Waiting for consensus.`);
+          serviceNowService.partialApproveTicket(originalRequest.serviceNowSysId, reviewerEmail, currentApprovals.length, threshold);
         }
       } else {
         effectiveStatus = 'APPROVED';
         console.log(`[UPDATE] Consensus reached (${currentApprovals.length}/${threshold})! Final reviewer: ${reviewerEmail}. Proceeding to grant access.`);
         if (originalRequest.serviceNowSysId) {
-          serviceNowService.addComment(originalRequest.serviceNowSysId, `Consensus reached! Approved by ${reviewerEmail}. Provisioning access.`);
+          serviceNowService.approveTicket(originalRequest.serviceNowSysId, reviewerEmail);
         }
       }
     } else if (status === 'REJECTED') {
       if (originalRequest.serviceNowSysId) {
-        serviceNowService.addComment(originalRequest.serviceNowSysId, `Access Request Rejected by ${reviewerEmail}. Result: REJECTED.`);
+        serviceNowService.rejectTicket(originalRequest.serviceNowSysId, reviewerEmail, adminNote);
       }
     } else if (status === 'REVOKED') {
       if (originalRequest.serviceNowSysId) {
-        serviceNowService.addComment(originalRequest.serviceNowSysId, `Access Revoked by ${reviewerEmail}. Result: REVOKED.`);
+        serviceNowService.closeTicket(originalRequest.serviceNowSysId, reviewerEmail, 'Access revoked');
       }
     }
 
@@ -4314,22 +4411,95 @@ app.post('/api/v1/access-request/update', async (req, res) => {
  * Webhook for ServiceNow integration.
  * Enables Option B: Directly approving requests from ServiceNow.
  */
+/**
+ * GET /api/v1/servicenow/ticket/:requestId
+ * Query the ServiceNow ticket status for a given access request
+ */
+app.get('/api/v1/servicenow/ticket/:requestId', async (req, res) => {
+  try {
+    const { requestId } = req.params;
+
+    // First check Firestore for the sys_id
+    const accessRequest = await getAccessRequestById(requestId);
+    if (!accessRequest) {
+      return res.status(404).json({ success: false, error: 'Access request not found' });
+    }
+
+    const sysId = accessRequest.serviceNowSysId;
+    if (!sysId || sysId === 'mock' || sysId === 'error') {
+      return res.json({
+        success: true,
+        ticket: {
+          number: accessRequest.serviceNowTicket || 'N/A',
+          state: 'Not tracked in ServiceNow',
+          link: null
+        }
+      });
+    }
+
+    // Query ServiceNow for live status
+    const ticket = await serviceNowService.getTicket(sysId);
+    if (!ticket) {
+      return res.json({ success: true, ticket: { number: accessRequest.serviceNowTicket, state: 'Unable to fetch', link: null } });
+    }
+
+    return res.json({ success: true, ticket });
+  } catch (error) {
+    console.error('[SN-STATUS] Error:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * GET /api/v1/servicenow/open-tickets
+ * List all open ServiceNow tickets (for admin dashboard)
+ */
+app.get('/api/v1/servicenow/open-tickets', async (req, res) => {
+  try {
+    const tickets = await serviceNowService.getOpenTickets();
+    return res.json({ success: true, tickets, count: tickets.length });
+  } catch (error) {
+    console.error('[SN-OPEN] Error:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * POST /api/v1/access-request/webhook
+ * Webhook endpoint for ServiceNow to call back when a ticket state changes.
+ * ServiceNow Business Rule (REST Message) should POST here on state change.
+ */
 app.post('/api/v1/access-request/webhook', async (req, res) => {
   try {
+    // Support both direct fields and ServiceNow's format
     const { requestId, status, reviewerEmail, secret } = req.body;
+    const correlationId = requestId || req.body[serviceNowService._field('correlation_id')] || req.body.correlation_id;
+    const snState = status || req.body.state;
 
-    // Security check (if secret is configured)
-    const webhookSecret = process.env.SERVICENOW_WEBHOOK_SECRET;
-    if (webhookSecret && secret !== webhookSecret) {
-      console.warn('[WEBHOOK] Invalid secret provided in webhook call');
-      return res.status(401).json({ success: false, error: 'Unauthorized: Invalid webhook secret' });
+    // Security check
+    if (!serviceNowService.validateWebhook(req) && !(process.env.SERVICENOW_WEBHOOK_SECRET && secret === process.env.SERVICENOW_WEBHOOK_SECRET)) {
+      console.warn('[WEBHOOK] Unauthorized webhook call');
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
 
-    if (!requestId || !status) {
-      return res.status(400).json({ success: false, error: 'Missing requestId or status in payload' });
+    if (!correlationId || !snState) {
+      return res.status(400).json({ success: false, error: 'Missing requestId/correlation_id or status in payload' });
     }
 
-    console.log(`[WEBHOOK] Received update for request ${requestId} from ServiceNow. New status: ${status}`);
+    // Map ServiceNow state codes to our status
+    const { SN_STATES } = require('./services/serviceNowService');
+    const stateMap = {
+      [SN_STATES.APPROVED]: 'APPROVED',
+      [SN_STATES.REJECTED]: 'REJECTED',
+      [SN_STATES.CLOSED]: 'APPROVED', // Closed usually means resolved/approved
+      [SN_STATES.CANCELLED]: 'REJECTED',
+      'APPROVED': 'APPROVED',
+      'REJECTED': 'REJECTED',
+      'CLOSED': 'APPROVED'
+    };
+    const mappedStatus = stateMap[snState] || stateMap[snState.toUpperCase()] || snState.toUpperCase();
+
+    console.log(`[WEBHOOK] Received: correlationId=${correlationId}, snState=${snState}, mappedStatus=${mappedStatus}, reviewer=${reviewerEmail || 'ServiceNow'}`);
 
     // Fetch original request
     const originalRequest = await getAccessRequestById(requestId);

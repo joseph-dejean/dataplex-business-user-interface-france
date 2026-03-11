@@ -46,6 +46,9 @@ interface AccessRequest {
   requestedRole?: string;
   approvals?: string[]; // Emails of stewards who already approved
   serviceNowTicket?: string;
+  serviceNowSysId?: string;
+  serviceNowState?: string;
+  serviceNowLink?: string;
 }
 
 const AccessRequestsDashboard: React.FC = () => {
@@ -368,13 +371,22 @@ const AccessRequestsDashboard: React.FC = () => {
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2" sx={{ color: '#1F1F1F' }}>{request.requesterEmail}</Typography>
-                      {request.serviceNowTicket && (
-                        <Tooltip title="ServiceNow Ticket">
+                      {request.serviceNowTicket && request.serviceNowTicket !== 'ERROR-CREATING-SN' && (
+                        <Tooltip title={`ServiceNow: ${request.serviceNowState || 'Click to view'}`}>
                           <Chip
-                            label={request.serviceNowTicket}
+                            label={`SN: ${request.serviceNowTicket}${request.serviceNowState ? ' - ' + request.serviceNowState : ''}`}
                             size="small"
                             variant="outlined"
-                            sx={{ fontSize: '10px', height: '18px', mt: 0.5, borderColor: '#DADCE0' }}
+                            clickable={!!request.serviceNowLink}
+                            onClick={() => request.serviceNowLink && window.open(request.serviceNowLink, '_blank')}
+                            sx={{
+                              fontSize: '10px', height: '20px', mt: 0.5,
+                              borderColor: request.serviceNowState === 'Approved' ? '#34A853' :
+                                request.serviceNowState === 'Rejected' ? '#EA4335' : '#1A73E8',
+                              color: request.serviceNowState === 'Approved' ? '#34A853' :
+                                request.serviceNowState === 'Rejected' ? '#EA4335' : '#1A73E8',
+                              cursor: request.serviceNowLink ? 'pointer' : 'default'
+                            }}
                           />
                         </Tooltip>
                       )}

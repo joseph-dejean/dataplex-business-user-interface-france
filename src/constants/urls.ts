@@ -52,6 +52,10 @@ export const URLS = {
     LINEAGE_SEARCH_COLUMN_LEVEL: '/lineage-column-level',
     DATASET_RELATIONSHIPS: '/dataset-relationships',
 
+    // ServiceNow
+    SERVICENOW_TICKET_STATUS: '/servicenow/ticket', // + /:requestId
+    SERVICENOW_OPEN_TICKETS: '/servicenow/open-tickets',
+
     // Admin Role Management
     ADMIN_CHECK: '/admin/check',
     ADMIN_ROLES: '/admin/roles',
