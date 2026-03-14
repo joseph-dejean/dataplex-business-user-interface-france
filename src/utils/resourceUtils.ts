@@ -3,9 +3,38 @@ export const getName = (namePath: string = '', separator: string = '') => {
   return (segments[segments.length - 1]);
 };
 
-export const getEntryType = (namePath: string = '', separator: string = '') => {
+export const getEntryType = (namePath: string = '', separator: string = '', entryType?: string) => {
+  // If entryType is provided (Dataplex Universal Catalog format),
+  // derive the type from it (e.g. "projects/.../entryTypes/bigquery-table" -> "Tables")
+  if (entryType) {
+    const lastSegment = entryType.split('/').pop() || '';
+    const upper = lastSegment.toUpperCase();
+    if (upper.includes('TABLE')) return 'Tables';
+    if (upper.includes('DATASET')) return 'Datasets';
+    if (upper.includes('VIEW')) return 'Views';
+    if (upper.includes('MODEL')) return 'Models';
+    if (upper.includes('ROUTINE')) return 'Routines';
+    if (upper.includes('BUCKET')) return 'Buckets';
+    if (upper.includes('PRODUCT')) return 'Products';
+    const cleaned = lastSegment.replace(/^bigquery-/i, '').replace(/[-_]/g, ' ').trim();
+    return cleaned.charAt(0).toUpperCase() + cleaned.slice(1) + 's';
+  }
+
   const segments: string[] = namePath.split(separator);
-  let eType = segments[segments.length - 2];
+  const eType = segments[segments.length - 2];
+  if (!eType) return 'Unknown';
+
+  // Dataplex Universal Catalog uses entryGroups/entries path format
+  if (eType === 'entries' || eType === 'entryGroups') {
+    const entryId = segments[segments.length - 1] || '';
+    if (entryId.startsWith('bigquery_')) {
+      const bqParts = entryId.replace('bigquery_', '').split('_');
+      if (bqParts.length >= 3) return 'Tables';
+      if (bqParts.length === 2) return 'Datasets';
+    }
+    return 'Entries';
+  }
+
   return (`${eType[0].toUpperCase()}${eType.slice(1)}`);
 };
 
@@ -83,7 +112,7 @@ export const getFormattedDateTimePartsByDateTime = (dateTime: any) => {
 export const generateBigQueryLink = (entry: any) => {
   if (!entry?.name || !entry?.fullyQualifiedName) return '';
 
-  const type = getEntryType(entry.name, '/');
+  const type = getEntryType(entry.name, '/', entry.entryType);
   const fqnParts = entry.fullyQualifiedName.split(':').pop().split('.');
 
   if (fqnParts.length < 2) return '';

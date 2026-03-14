@@ -105,7 +105,7 @@ const ViewDetails = () => {
 
   const handleAnnotationExpandAll = () => {
     if (displayEntry?.aspects) {
-      const number = getEntryType(displayEntry.name, '/');
+      const number = displayEntry.entryType?.split('/')[1] || '';
       const annotationKeys = Object.keys(displayEntry.aspects)
         .filter(key =>
           key !== `${number}.global.schema` &&
@@ -323,7 +323,7 @@ const ViewDetails = () => {
     }
 
     // Fetch child entries for Datasets (to support Chat with related tables)
-    if (id_token && displayEntry?.name && getEntryType(displayEntry.name, '/') === 'Datasets') {
+    if (id_token && displayEntry?.name && getEntryType(displayEntry.name, '/', displayEntry.entryType) === 'Datasets') {
       dispatch(fetchEntriesByParent({ parent: displayEntry.name, id_token: id_token }));
     }
   }, [dispatch, id_token, displayEntry]);
@@ -384,7 +384,7 @@ const ViewDetails = () => {
     }
     if (entryStatus === 'succeeded') {
       setLoading(false);
-      if (getEntryType(displayEntry?.name || '', '/') === 'Tables' && displayEntry?.entrySource?.system?.toLowerCase() === 'bigquery') {
+      if (getEntryType(displayEntry?.name || '', '/', displayEntry?.entryType) === 'Tables' && displayEntry?.entrySource?.system?.toLowerCase() === 'bigquery') {
         dispatch(getSampleData({ fqn: displayEntry.fullyQualifiedName, id_token: id_token }));
       }
     }
@@ -611,7 +611,7 @@ const ViewDetails = () => {
                       }}
                     />
                     <Tag
-                      text={getEntryType(displayEntry.name, '/')}
+                      text={getEntryType(displayEntry.name, '/', displayEntry.entryType)}
                       css={{
                         fontFamily: '"Google Sans Text", sans-serif',
                         backgroundColor: '#C2E7FF',
@@ -736,7 +736,7 @@ const ViewDetails = () => {
                           children: <span className="indicator" />,
                         }}
                       >
-                        {getEntryType(displayEntry.name, '/') === 'Tables' && displayEntry.entrySource?.system?.toLowerCase() === 'bigquery' ? [
+                        {getEntryType(displayEntry.name, '/', displayEntry.entryType) === 'Tables' && displayEntry.entrySource?.system?.toLowerCase() === 'bigquery' ? [
                           <Tab key="overview" label="Overview" {...tabProps(0)} />,
                           <Tab key="annotations" label="Aspects" {...tabProps(1)} />,
                           <Tab key="lineage" label="Lineage" {...tabProps(2)} />,
@@ -744,7 +744,7 @@ const ViewDetails = () => {
                           <Tab key="dataQuality" label="Data Quality" {...tabProps(4)} />,
                           <Tab key="chat" label="Chat with Table" {...tabProps(5)} />,
 
-                        ] : getEntryType(displayEntry.name, '/') === 'Datasets' ? [
+                        ] : getEntryType(displayEntry.name, '/', displayEntry.entryType) === 'Datasets' ? [
                           <Tab key="overview" label="Overview" {...tabProps(0)} />,
                           <Tab key="entryList" label="Entry List" {...tabProps(1)} />,
                           <Tab key="annotations" label="Aspects" {...tabProps(2)} />,
@@ -775,7 +775,7 @@ const ViewDetails = () => {
                 <CustomTabPanel value={tabValue} index={0}>
                   {overviewTab}
                 </CustomTabPanel>
-                {getEntryType(displayEntry.name, '/') === 'Tables' && displayEntry.entrySource?.system?.toLowerCase() === 'bigquery' ? (
+                {getEntryType(displayEntry.name, '/', displayEntry.entryType) === 'Tables' && displayEntry.entrySource?.system?.toLowerCase() === 'bigquery' ? (
                   <>
                     <CustomTabPanel value={tabValue} index={1}>
                       <AnnotationFilter
@@ -803,7 +803,7 @@ const ViewDetails = () => {
                       </Box>
                     </CustomTabPanel>
                   </>
-                ) : getEntryType(displayEntry.name, '/') === 'Datasets' ? (
+                ) : getEntryType(displayEntry.name, '/', displayEntry.entryType) === 'Datasets' ? (
                   <>
                     <CustomTabPanel value={tabValue} index={1}>
                       <EntryList entry={displayEntry} />

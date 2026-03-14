@@ -250,7 +250,7 @@ const ResourcePreview: React.FC<ResourcePreviewProps> = ({
 
   const handleAnnotationExpandAll = () => {
     if (entry?.aspects) {
-      const number = getEntryType(entry.name, '/');
+      const number = entry.entryType?.split('/')[1] || '';
       const annotationKeys = Object.keys(entry.aspects)
         .filter(key =>
           // First, filter out the non-annotation aspects as before
@@ -706,7 +706,7 @@ const ResourcePreview: React.FC<ResourcePreviewProps> = ({
           </Tooltip>
 
           {/* Chat with Table - Only for BigQuery Tables with access */}
-          {previewData.entrySource?.system?.toLowerCase() === 'bigquery' && getEntryType(previewData.name, '/') === 'Tables' && (
+          {previewData.entrySource?.system?.toLowerCase() === 'bigquery' && getEntryType(previewData.name, '/', previewData.entryType) === 'Tables' && (
             <Tooltip title={!hasAccess ? "Request access to chat with this table" : (demoMode ? "Disabled in demo mode" : "Chat with this table using AI")} arrow>
               <CTAButton
                 disabled={!hasAccess || demoMode}
@@ -790,7 +790,7 @@ const ResourcePreview: React.FC<ResourcePreviewProps> = ({
           </div>
 
           {/* Tab 2: Schema */}
-          {hasAccess && getEntryType(previewData.name, '/') == 'Tables' && (
+          {hasAccess && getEntryType(previewData.name, '/', previewData.entryType) == 'Tables' && (
             <div
               style={{
                 flex: 1,
@@ -866,7 +866,7 @@ const ResourcePreview: React.FC<ResourcePreviewProps> = ({
           )}
 
           {/* Tab 4: Chat */}
-          {hasAccess && previewData.entrySource?.system?.toLowerCase() === 'bigquery' && getEntryType(previewData.name, '/') === 'Tables' && (
+          {hasAccess && previewData.entrySource?.system?.toLowerCase() === 'bigquery' && getEntryType(previewData.name, '/', previewData.entryType) === 'Tables' && (
             <div
               style={{
                 flex: 1,
@@ -1074,7 +1074,7 @@ const ResourcePreview: React.FC<ResourcePreviewProps> = ({
             </div>
           )}
           {
-            tabValue === 1 && getEntryType(previewData.name, '/') == 'Tables' && (
+            tabValue === 1 && getEntryType(previewData.name, '/', previewData.entryType) == 'Tables' && (
               <>
                 {entryStatus === 'succeeded' ? (
                   schemaData.length > 0 ? (

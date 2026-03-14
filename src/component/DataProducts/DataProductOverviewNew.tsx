@@ -32,7 +32,7 @@ import { InfoOutline } from '@mui/icons-material';
  * - **Details Accordion**: Shows key metadata like description, system, status,
  * location, and copyable identifiers (Resource, FQN).
  * - **Table Info Accordion** (Conditional): Rendered only if the entry is a
- * table (`getEntryType(entry.name, '/') == 'Tables'`). Contains tabs for:
+ * table (`getEntryType(entry.name, '/', entry.entryType) == 'Tables'`). Contains tabs for:
  * - **Schema**: Displays the table schema using the `Schema` component,
  * with filtering provided by `SchemaFilter`.
  * - **Sample Data**: Displays sample rows (if `sampleTableData` is provided)
@@ -642,7 +642,7 @@ const DataProductOverviewNew: React.FC<DataProductOverviewNewProps> = ({ entry, 
                         </Accordion>
                     </Box>
                     {/* Table Info Accordion */}
-                    {getEntryType(entry.name, '/') == 'Tables' ? (
+                    {getEntryType(entry.name, '/', entry.entryType) == 'Tables' ? (
                         <Box sx={{
                             border: "1px solid #DADCE0",
                             borderRadius: "8px",

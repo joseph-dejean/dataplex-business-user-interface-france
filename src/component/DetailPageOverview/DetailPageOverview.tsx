@@ -231,7 +231,7 @@ const DetailPageOverview: React.FC<DetailPageOverviewProps> = ({ entry, sampleTa
     const { date: updateDate, time: updateTime } = getFormattedDateTimeParts(entry?.updateTime?.seconds);
 
 
-    const entryType = getEntryType(entry?.name || '', '/');
+    const entryType = getEntryType(entry?.name || '', '/', entry?.entryType);
     const isTable = entryType === 'Tables';
     const isDataset = entryType === 'Datasets';
     const isTechnicalAsset = isTable || isDataset;
