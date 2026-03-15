@@ -83,17 +83,56 @@ const triggerDocumentationScan = async (billingProject, location, bqProject, bqD
  * Implement a recursive lookup reading the Documentation Aspect from Dataplex Catalog.
  * up to maxDegree 3.
  */
+/**
+ * Try to fetch a Dataplex entry by looking up its FQN via searchEntries.
+ * This avoids needing to know the exact entry name/location format.
+ */
+const lookupEntryByFqn = async (client, billingProject, fqn) => {
+    const searchQuery = `fully_qualified_name=${fqn}`;
+    try {
+        const [response] = await client.searchEntries({
+            name: `projects/${billingProject}/locations/global`,
+            query: searchQuery,
+            pageSize: 1,
+        });
+        const results = response.results || response;
+        if (results && results.length > 0) {
+            return results[0].dataplexEntry || results[0];
+        }
+    } catch (err) {
+        console.warn(`[RELATIONSHIPS] searchEntries failed for ${fqn}:`, err.message);
+    }
+
+    // Fallback: try getEntry with multiple location formats
+    const parsed = parseFqn(fqn);
+    if (!parsed) return null;
+
+    const locations = ['global', 'us', 'eu', 'europe-west1', 'us-central1'];
+    for (const loc of locations) {
+        try {
+            const entryName = `projects/${parsed.project}/locations/${loc}/entryGroups/@bigquery/entries/bigquery.googleapis.com/projects/${parsed.project}/datasets/${parsed.dataset}/tables/${parsed.table}`;
+            const [entry] = await client.getEntry({
+                name: entryName,
+                view: protos.google.cloud.dataplex.v1.EntryView.ALL
+            });
+            if (entry) return entry;
+        } catch (_) {
+            // Try next location
+        }
+    }
+    return null;
+};
+
 const fetchRelationshipsFromCatalog = async (billingProject, location, rootTablesFqns, maxDegree = 3) => {
     const relationships = [];
     const visited = new Set();
     const queue = [];
-    let scansTriggered = 0; // Track how many DataScans we had to trigger
+    let scansTriggered = 0;
 
-    // Initialize queue with degree 0
     for (const fqn of rootTablesFqns) {
         const parsed = parseFqn(fqn);
         if (parsed) {
-            queue.push({ ...parsed, degree: 0 });
+            queue.push({ ...parsed, fqn: fqn.replace('bigquery:', '').replace('bigquery://', ''), degree: 0 });
             visited.add(`${parsed.project}.${parsed.dataset}.${parsed.table}`);
         }
     }
@@ -105,16 +144,18 @@ const fetchRelationshipsFromCatalog = async (billingProject, location, rootTable
 
         if (current.degree > maxDegree) continue;
 
-        const entryName = `projects/${current.project}/locations/${location}/entryGroups/@bigquery/entries/bigquery_${current.project}_${current.dataset}_${current.table}`;
-        console.log(`[RELATIONSHIPS] 3rd Degree Discovery: Fetching aspect for ${current.project}.${current.dataset}.${current.table} at degree ${current.degree}`);
+        const currentFqn = `bigquery:${current.project}.${current.dataset}.${current.table}`;
+        console.log(`[RELATIONSHIPS] Fetching aspects for ${current.project}.${current.dataset}.${current.table} at degree ${current.degree}`);
 
         try {
-            const [entry] = await client.getEntry({
-                name: entryName,
-                view: protos.google.cloud.dataplex.v1.EntryView.ALL
-            });
+            const entry = await lookupEntryByFqn(client, billingProject, currentFqn);
 
-            if (!entry || !entry.aspects) continue;
+            if (!entry || !entry.aspects) {
+                console.log(`[RELATIONSHIPS] No entry/aspects for ${current.table}, triggering DataScan...`);
+                await triggerDocumentationScan(billingProject, location, current.project, current.dataset, current.table);
+                scansTriggered++;
+                continue;
+            }
 
             const aspectKeys = Object.keys(entry.aspects);
             const docAspectKey = aspectKeys.find(k => k.includes('data_documentation') || k.includes('documentation'));
@@ -123,14 +164,12 @@ const fetchRelationshipsFromCatalog = async (billingProject, location, rootTable
                 const docData = entry.aspects[docAspectKey].data;
                 const fields = docData && docData.fields ? docData.fields : {};
 
-                // Try to find related entities. Assuming the Gemini-powered scan puts them in a field like related_entities or similar
                 let relatedEntities = null;
                 if (fields.related_entities && fields.related_entities.listValue) {
                     relatedEntities = fields.related_entities.listValue.values;
                 } else if (fields.relatedEntities && fields.relatedEntities.listValue) {
                     relatedEntities = fields.relatedEntities.listValue.values;
                 } else {
-                    // search by inspecting all keys
                     for (const key of Object.keys(fields)) {
                         if (key.toLowerCase().includes('related') && fields[key].listValue) {
                             relatedEntities = fields[key].listValue.values;
@@ -148,7 +187,6 @@ const fetchRelationshipsFromCatalog = async (billingProject, location, rootTable
                         if (relatedTableFqn) {
                             const parsedRel = parseFqn(relatedTableFqn);
                             if (parsedRel) {
-                                // Add relationship
                                 relationships.push({
                                     table1: current.table,
                                     table2: parsedRel.table,
@@ -167,7 +205,6 @@ const fetchRelationshipsFromCatalog = async (billingProject, location, rootTable
                     }
                 }
             } else {
-                // Documentation aspect missing, trigger scan
                 console.log(`[RELATIONSHIPS] No documentation aspect for ${current.table}, triggering DataScan...`);
                 await triggerDocumentationScan(billingProject, location, current.project, current.dataset, current.table);
                 scansTriggered++;
@@ -175,12 +212,10 @@ const fetchRelationshipsFromCatalog = async (billingProject, location, rootTable
 
         } catch (err) {
             if (err.code === 5 || (err.message && err.message.includes('NOT_FOUND'))) {
-                // Table doesn't exist in catalog or name schema might be different.
-                // We'll still try to trigger a scan for it since Dataplex DataScans can run on native BQ tables.
                 await triggerDocumentationScan(billingProject, location, current.project, current.dataset, current.table);
                 scansTriggered++;
             } else {
-                console.warn(`[RELATIONSHIPS] Entry Fetch error for ${entryName}:`, err.message);
+                console.warn(`[RELATIONSHIPS] Entry fetch error for ${current.table}:`, err.message);
             }
         }
     }

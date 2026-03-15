@@ -3761,19 +3761,18 @@ app.get('/api/v1/dataset-relationships', async (req, res) => {
       }
     }
 
-    // Fetch all tables in the dataset using Data Catalog search
-    console.log(`[RELATIONSHIPS] Cache miss, fetching tables from Data Catalog...`);
-    const dataCatalogClient = new DataCatalogClient();
+    // Fetch all tables in the dataset using Dataplex Universal Catalog searchEntries
+    console.log(`[RELATIONSHIPS] Cache miss, fetching tables from Dataplex Catalog...`);
+    const relCatalogClient = new CatalogServiceClient();
 
-    const searchQuery = `system=bigquery type=TABLE parent:${project}.${dataset}`;
-    const [searchResults] = await dataCatalogClient.searchCatalog({
-      scope: {
-        includeProjectIds: [project, PROJECT_ID],
-        includeGcpPublicDatasets: false
-      },
+    const searchQuery = `system=bigquery type=TABLE fully_qualified_name:bigquery:${project}.${dataset}`;
+    const [searchResponse] = await relCatalogClient.searchEntries({
+      name: `projects/${PROJECT_ID}/locations/global`,
       query: searchQuery,
-      pageSize: 100
+      pageSize: 100,
     });
+
+    const searchResults = searchResponse.results || searchResponse || [];
 
     console.log(`[RELATIONSHIPS] Found ${searchResults.length} tables in ${project}.${dataset}`);
 
@@ -3789,11 +3788,14 @@ app.get('/api/v1/dataset-relationships', async (req, res) => {
       });
     }
 
-    // Extract table FQNs
-    const rootTableFqns = searchResults.map(r => r.fullyQualifiedName || `bigquery:${project}.${dataset}.${r.displayName}`);
+    // Extract table FQNs from Dataplex search results
+    const rootTableFqns = searchResults.map(r => {
+      const entry = r.dataplexEntry || r;
+      return entry.fullyQualifiedName || `bigquery:${project}.${dataset}.${(entry.entrySource && entry.entrySource.displayName) || 'unknown'}`;
+    });
 
     // Fetch relationships up to 3rd degree via Catalog API
-    let location = process.env.GCP_LOCATION || 'eu'; // Assuming eu based on user's earlier test or config
+    let location = process.env.GCP_LOCATION || 'europe-west1';
     const billingProject = PROJECT_ID; // Billing project for API calls
 
     const result = await datasetRelationshipService.fetchRelationshipsFromCatalog(
