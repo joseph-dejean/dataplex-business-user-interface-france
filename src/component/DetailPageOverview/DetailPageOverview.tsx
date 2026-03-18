@@ -161,12 +161,14 @@ const DetailPageOverview: React.FC<DetailPageOverviewProps> = ({ entry, sampleTa
     const [filteredSampleData, setFilteredSampleData] = useState<any[]>([]);
     const [lineageRelations, setLineageRelations] = useState<Relationship[]>([]);
     const [relationshipsLoading, setRelationshipsLoading] = useState(false);
+    const [relationshipsScanMessage, setRelationshipsScanMessage] = useState<string | null>(null);
 
     // Fetch Dataset Relationships (inferred from schema)
     useEffect(() => {
         const fetchRelationships = async () => {
             if (!entry?.fullyQualifiedName || !isTechnicalAsset) return;
             setRelationshipsLoading(true);
+            setRelationshipsScanMessage(null);
             try {
                 // Extract project and dataset from FQN like "bigquery:project.dataset.table"
                 const fqn = entry.fullyQualifiedName.replace('bigquery:', '');
@@ -185,6 +187,9 @@ const DetailPageOverview: React.FC<DetailPageOverviewProps> = ({ entry, sampleTa
                 });
                 if (response.data && response.data.relationships) {
                     setLineageRelations(response.data.relationships);
+                }
+                if (response.data?.scansTriggered > 0 && response.data?.message) {
+                    setRelationshipsScanMessage(response.data.message);
                 }
             } catch (err) {
                 console.warn('Failed to fetch dataset relationships:', err);
@@ -889,12 +894,25 @@ const DetailPageOverview: React.FC<DetailPageOverviewProps> = ({ entry, sampleTa
                                     <Typography variant="body2" sx={{ color: '#5F6368' }}>Loading relationships...</Typography>
                                 </Box>
                             ) : lineageRelations.length > 0 ? (
-                                <RelationshipGraph
-                                    relationships={lineageRelations}
-                                    height={400}
-                                    currentTable={entry?.fullyQualifiedName ? entry.fullyQualifiedName.replace('bigquery:', '').split('.')[2] : undefined}
-                                    onNodeClick={onTableClick}
-                                />
+                                <>
+                                    <RelationshipGraph
+                                        relationships={lineageRelations}
+                                        height={400}
+                                        currentTable={entry?.fullyQualifiedName ? entry.fullyQualifiedName.replace('bigquery:', '').split('.')[2] : undefined}
+                                        onNodeClick={onTableClick}
+                                    />
+                                    {relationshipsScanMessage && (
+                                        <Typography variant="caption" sx={{ color: '#1A73E8', mt: 1, display: 'block' }}>
+                                            {relationshipsScanMessage}
+                                        </Typography>
+                                    )}
+                                </>
+                            ) : relationshipsScanMessage ? (
+                                <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 200, flexDirection: 'column', gap: 1 }}>
+                                    <Typography variant="body2" sx={{ color: '#1A73E8' }}>
+                                        {relationshipsScanMessage}
+                                    </Typography>
+                                </Box>
                             ) : (
                                 <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 200, flexDirection: 'column', gap: 1 }}>
                                     <Typography variant="body2" sx={{ color: '#5F6368' }}>

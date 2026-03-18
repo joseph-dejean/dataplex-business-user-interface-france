@@ -22,7 +22,11 @@ import {
   Button,
   TextField,
   InputAdornment,
-  Tooltip
+  Tooltip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions
 } from '@mui/material';
 import { ArrowBack, CheckCircle, Cancel, Refresh, Person, Assignment, AdminPanelSettings, Search } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
@@ -113,12 +117,18 @@ const AccessRequestsDashboard: React.FC = () => {
     }
   };
 
-  const handleUpdateStatus = async (requestId: string, newStatus: 'approved' | 'rejected' | 'revoked') => {
+  // Reject dialog state
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+  const [rejectRequestId, setRejectRequestId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+
+  const handleUpdateStatus = async (requestId: string, newStatus: 'approved' | 'rejected' | 'revoked', reason?: string) => {
     try {
       const response = await axios.post(`${URLS.API_URL}${URLS.UPDATE_ACCESS_REQUEST}`, {
         requestId,
         status: newStatus.toUpperCase(),
-        reviewerEmail: user?.email
+        reviewerEmail: user?.email,
+        ...(reason ? { adminNote: reason } : {})
       }, {
         headers: {
           Authorization: `Bearer ${user?.token}`,
@@ -384,8 +394,21 @@ const AccessRequestsDashboard: React.FC = () => {
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2" sx={{ color: '#1F1F1F' }}>{request.requesterEmail}</Typography>
-                      {request.serviceNowTicket && request.serviceNowTicket !== 'ERROR-CREATING-SN' && (
-                        request.serviceNowTicket.startsWith('MOCK-SN-') ? (
+                      {request.serviceNowTicket && (
+                        request.serviceNowTicket === 'ERROR-CREATING-SN' ? (
+                          <Tooltip title="Failed to create ServiceNow ticket. Check ServiceNow configuration.">
+                            <Chip
+                              label="SN: Error"
+                              size="small"
+                              variant="outlined"
+                              sx={{
+                                fontSize: '10px', height: '20px', mt: 0.5,
+                                borderColor: '#EA4335', color: '#EA4335',
+                                cursor: 'default'
+                              }}
+                            />
+                          </Tooltip>
+                        ) : request.serviceNowTicket.startsWith('MOCK-SN-') ? (
                           <Tooltip title="ServiceNow integration is not configured. Contact your administrator to enable it.">
                             <Chip
                               label="SN: Not configured"
@@ -459,7 +482,7 @@ const AccessRequestsDashboard: React.FC = () => {
                               variant="outlined"
                               color="error"
                               startIcon={<Cancel sx={{ fontSize: '16px !important' }} />}
-                              onClick={() => handleUpdateStatus(request.id, 'rejected')}
+                              onClick={() => { setRejectRequestId(request.id); setRejectReason(''); setRejectDialogOpen(true); }}
                               sx={{ textTransform: 'none', borderRadius: '16px', py: 0 }}
                             >
                               Reject
@@ -494,6 +517,33 @@ const AccessRequestsDashboard: React.FC = () => {
           </TableContainer>
         )}
       </Box>
+
+      {/* Reject Confirmation Dialog */}
+      <Dialog open={rejectDialogOpen} onClose={() => setRejectDialogOpen(false)}>
+        <DialogTitle>Reject Access Request</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ mb: 2 }}>Are you sure you want to reject this access request?</Typography>
+          <TextField
+            label="Reason (optional)"
+            fullWidth
+            multiline
+            rows={3}
+            value={rejectReason}
+            onChange={(e) => setRejectReason(e.target.value)}
+            placeholder="Provide a reason for rejection..."
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRejectDialogOpen(false)}>Cancel</Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={() => { if (rejectRequestId) { handleUpdateStatus(rejectRequestId, 'rejected', rejectReason); setRejectDialogOpen(false); } }}
+          >
+            Reject
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

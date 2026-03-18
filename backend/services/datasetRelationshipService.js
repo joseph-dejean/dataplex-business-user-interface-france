@@ -1,6 +1,15 @@
 const { Firestore } = require('@google-cloud/firestore');
 const { CatalogServiceClient, protos } = require('@google-cloud/dataplex');
 const { GoogleAuth } = require('google-auth-library');
+const { BigQuery } = require('@google-cloud/bigquery');
+
+let bigqueryClient = null;
+const getBigQueryClient = () => {
+    if (!bigqueryClient) {
+        bigqueryClient = new BigQuery();
+    }
+    return bigqueryClient;
+};
 
 let firestore = null;
 const getFirestore = () => {
@@ -69,10 +78,33 @@ const triggerDocumentationScan = async (billingProject, location, bqProject, bqD
         });
 
         console.log(`[RELATIONSHIPS] DataScan created successfully for ${bqTable}`);
+        // Scan created — now trigger the first run
+        try {
+            const runUrl = `https://dataplex.googleapis.com/v1/projects/${billingProject}/locations/${location}/dataScans/${dataScanId}:run`;
+            await client.request({ url: runUrl, method: 'POST', data: {} });
+            console.log(`[RELATIONSHIPS] DataScan run triggered for ${bqTable}`);
+        } catch (runErr) {
+            console.warn(`[RELATIONSHIPS] DataScan run trigger failed for ${bqTable}:`, runErr.message);
+        }
     } catch (err) {
         if (err.response && err.response.status === 409) {
-            console.log(`[RELATIONSHIPS] DataScan ALREADY EXISTS for ${bqTable}. Ensure it has run.`);
-            // if we wanted to be robust, we'd trigger a run via POST .../dataScans/{id}:run here
+            console.log(`[RELATIONSHIPS] DataScan ALREADY EXISTS for ${bqTable}. Triggering a run...`);
+            // Actually run the existing scan so documentation aspects get populated
+            try {
+                const client2 = await getAuthClient();
+                const baseScanId2 = `doc-scan-${bqProject}-${bqDataset}-${bqTable}`.replace(/[^a-z0-9-]/gi, '-').toLowerCase();
+                const dataScanId2 = baseScanId2.length > 63 ? baseScanId2.substring(0, 63) : baseScanId2;
+                const runUrl = `https://dataplex.googleapis.com/v1/projects/${billingProject}/locations/${location}/dataScans/${dataScanId2}:run`;
+                await client2.request({ url: runUrl, method: 'POST', data: {} });
+                console.log(`[RELATIONSHIPS] DataScan run triggered for existing scan: ${bqTable}`);
+            } catch (runErr) {
+                // 409 on run means a run is already in progress — that's fine
+                if (runErr.response && runErr.response.status === 409) {
+                    console.log(`[RELATIONSHIPS] DataScan run already in progress for ${bqTable}`);
+                } else {
+                    console.warn(`[RELATIONSHIPS] Failed to trigger run for existing scan ${bqTable}:`, runErr.message);
+                }
+            }
         } else {
             console.warn(`[RELATIONSHIPS] Error creating DataScan for ${bqTable}:`, err.response ? JSON.stringify(err.response.data) : err.message);
         }
@@ -137,6 +169,77 @@ const lookupEntryByFqn = async (client, billingProject, fqn) => {
         }
     }
     return null;
+};
+
+/**
+ * Infer relationships from BigQuery schema by analyzing column naming patterns.
+ * Looks for columns like table_id, table_name, tableId that match other table names.
+ */
+const inferRelationshipsFromSchema = async (bqProject, bqDataset, tableNames) => {
+    const relationships = [];
+    try {
+        const bq = getBigQueryClient();
+        const query = `
+            SELECT table_name, column_name
+            FROM \`${bqProject}.${bqDataset}.INFORMATION_SCHEMA.COLUMNS\`
+            WHERE table_name IN UNNEST(@tableNames)
+            ORDER BY table_name, ordinal_position
+        `;
+        const [rows] = await bq.query({ query, params: { tableNames }, location: 'EU' });
+
+        // Build a map of table -> columns
+        const tableColumns = {};
+        for (const row of rows) {
+            if (!tableColumns[row.table_name]) tableColumns[row.table_name] = [];
+            tableColumns[row.table_name].push(row.column_name.toLowerCase());
+        }
+
+        const tableNamesLower = tableNames.map(t => t.toLowerCase());
+        const seen = new Set();
+
+        for (const [tableName, columns] of Object.entries(tableColumns)) {
+            for (const col of columns) {
+                // Match patterns: other_table_id, other_table_key, other_tableId, fk_other_table
+                for (const otherTable of tableNamesLower) {
+                    if (otherTable === tableName.toLowerCase()) continue;
+
+                    const patterns = [
+                        `${otherTable}_id`,
+                        `${otherTable}_key`,
+                        `${otherTable}id`,
+                        `fk_${otherTable}`,
+                        `${otherTable}_fk`,
+                    ];
+                    // Also handle singular forms: if table is "departments", check "department_id"
+                    const singular = otherTable.endsWith('s') ? otherTable.slice(0, -1) : otherTable;
+                    if (singular !== otherTable) {
+                        patterns.push(`${singular}_id`, `${singular}_key`, `${singular}id`);
+                    }
+
+                    if (patterns.includes(col)) {
+                        const edgeKey = [tableName, otherTable].sort().join('|');
+                        if (!seen.has(edgeKey)) {
+                            seen.add(edgeKey);
+                            // Find the actual case table name
+                            const actualOther = tableNames.find(t => t.toLowerCase() === otherTable) || otherTable;
+                            relationships.push({
+                                table1: tableName,
+                                table2: actualOther,
+                                relationship: `Inferred from column: ${tableName}.${col}`,
+                                confidence: 'medium (schema)',
+                                source: 'Schema Column Analysis'
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        console.log(`[RELATIONSHIPS] Schema inference found ${relationships.length} relationships for ${bqProject}.${bqDataset}`);
+    } catch (err) {
+        console.warn(`[RELATIONSHIPS] Schema inference failed for ${bqProject}.${bqDataset}:`, err.message);
+    }
+    return relationships;
 };
 
 const fetchRelationshipsFromCatalog = async (billingProject, location, rootTablesFqns, maxDegree = 3) => {
@@ -233,6 +336,21 @@ const fetchRelationshipsFromCatalog = async (billingProject, location, rootTable
             } else {
                 console.warn(`[RELATIONSHIPS] Entry fetch error for ${current.table}:`, err.message);
             }
+        }
+    }
+
+    // If scans were triggered and we have no relationships, try schema-based inference as fallback
+    if (relationships.length === 0 && rootTablesFqns.length > 0) {
+        const parsed = parseFqn(rootTablesFqns[0]);
+        if (parsed) {
+            const tableNames = rootTablesFqns.map(fqn => {
+                const p = parseFqn(fqn);
+                return p ? p.table : null;
+            }).filter(Boolean);
+
+            console.log(`[RELATIONSHIPS] No catalog relationships found. Trying schema-based inference for ${tableNames.length} tables...`);
+            const schemaRels = await inferRelationshipsFromSchema(parsed.project, parsed.dataset, tableNames);
+            relationships.push(...schemaRels);
         }
     }
 
@@ -342,6 +460,7 @@ const addManualRelationship = async (projectId, datasetId, relationship) => {
 
 module.exports = {
     fetchRelationshipsFromCatalog,
+    inferRelationshipsFromSchema,
     getCachedRelationships,
     cacheRelationships,
     invalidateCache,

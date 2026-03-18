@@ -78,12 +78,14 @@ const createNotification = async (data) => {
             expiresAt: expiresAt.toISOString()
         };
 
+        console.log(`[NOTIFICATION] Creating: type=${data.type}, recipient=${data.recipientEmail}, title="${data.title}"`);
         const docRef = getFirestore().collection(COLLECTION_NAME).doc(id);
         await docRef.set(notification);
+        console.log(`[NOTIFICATION] Created successfully: id=${id}`);
 
         return notification;
     } catch (error) {
-        console.error('Error creating notification:', error);
+        console.error(`[NOTIFICATION] Error creating (type=${data.type}, recipient=${data.recipientEmail}):`, error);
         throw error;
     }
 };

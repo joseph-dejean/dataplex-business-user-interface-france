@@ -494,16 +494,9 @@ app.post('/api/v1/chat', async (req, res) => {
             || msg.metadata?.conversation || msg.conversation
             || msg.systemMessage?.conversationName || msg.systemMessage?.metadata?.conversationName;
           if (convName && !returnedConversationId) {
-            // Format: projects/{project}/locations/{location}/conversations/{id}
-            const convParts = convName.split('/');
-            if (convParts.length >= 6) {
-              returnedConversationId = convParts[convParts.length - 1];
-              console.log(`[Stateful] Extracted conversation ID from conversationName: ${returnedConversationId}`);
-            } else {
-              // Maybe it's just the raw ID
-              returnedConversationId = convName;
-              console.log(`[Stateful] Extracted raw conversation ID: ${returnedConversationId}`);
-            }
+            // Store the FULL path to avoid project/location mismatches when resuming
+            returnedConversationId = convName;
+            console.log(`[Stateful] Extracted conversation path: ${returnedConversationId}`);
           }
           // Also check for conversationId directly
           if (msg.conversationId && !returnedConversationId) {
@@ -636,22 +629,28 @@ app.post('/api/v1/chat', async (req, res) => {
                     console.log('[ChartBuilder] No suitable column combination for chart');
                   }
 
-                  // Improve granularity for narrow data ranges
-                  if (vegaSpec && vegaSpec.encoding?.y?.type === 'quantitative' && numericCols.length > 0 && markType !== 'arc') {
-                    const numValues = dataRows.map(r => Number(r[numericCols[0]])).filter(v => !isNaN(v));
-                    if (numValues.length > 1) {
-                      const minVal = Math.min(...numValues);
-                      const maxVal = Math.max(...numValues);
-                      const range = maxVal - minVal;
-                      // If data range is narrow relative to max (<15%), use non-zero baseline with padding
-                      if (maxVal > 0 && range > 0 && range / maxVal < 0.15) {
-                        const padding = range * 0.15;
-                        vegaSpec.encoding.y.scale = { zero: false, domain: [Math.max(0, minVal - padding), maxVal + padding] };
-                        console.log(`[ChartBuilder] Narrow range detected (${minVal}-${maxVal}), using non-zero baseline`);
-                      }
-                      // Add number formatting for large values
-                      if (maxVal >= 1000) {
-                        vegaSpec.encoding.y.axis = { format: ',.0f' };
+                  // Improve granularity for narrow data ranges — check both x and y axes
+                  if (vegaSpec && markType !== 'arc' && numericCols.length > 0) {
+                    const axes = ['x', 'y'];
+                    for (const axis of axes) {
+                      const enc = vegaSpec.encoding?.[axis];
+                      if (enc?.type === 'quantitative' && enc?.field) {
+                        const numValues = dataRows.map(r => Number(r[enc.field])).filter(v => !isNaN(v));
+                        if (numValues.length > 1) {
+                          const minVal = Math.min(...numValues);
+                          const maxVal = Math.max(...numValues);
+                          const range = maxVal - minVal;
+                          // If data range is narrow relative to max (<30%), use non-zero baseline with padding
+                          if (maxVal > 0 && range > 0 && range / maxVal < 0.30) {
+                            const padding = range * 0.15 || maxVal * 0.02;
+                            enc.scale = { zero: false, domain: [Math.max(0, minVal - padding), maxVal + padding] };
+                            console.log(`[ChartBuilder] Narrow range on ${axis}-axis (${minVal}-${maxVal}), using non-zero baseline`);
+                          }
+                          // Add number formatting for large values
+                          if (maxVal >= 1000) {
+                            enc.axis = { ...(enc.axis || {}), format: ',.0f' };
+                          }
+                        }
                       }
                     }
                   }
@@ -926,17 +925,19 @@ CRITICAL RULES:
             if (!smartSpec.$schema) {
               smartSpec.$schema = "https://vega.github.io/schema/vega-lite/v5.json";
             }
-            // Apply narrow-range fix to Gemini-generated charts too
-            const yEnc = smartSpec.encoding?.y;
-            if (yEnc && yEnc.type === 'quantitative' && yEnc.field && smartSpec.mark !== 'arc') {
-              const vals = rawDataRows.map(r => Number(r[yEnc.field])).filter(v => !isNaN(v));
-              if (vals.length > 1) {
-                const mn = Math.min(...vals), mx = Math.max(...vals), rng = mx - mn;
-                if (mx > 0 && rng > 0 && rng / mx < 0.15) {
-                  const pad = rng * 0.15;
-                  yEnc.scale = { zero: false, domain: [Math.max(0, mn - pad), mx + pad] };
+            // Apply narrow-range fix to Gemini-generated charts too (both axes)
+            for (const axisKey of ['x', 'y']) {
+              const axEnc = smartSpec.encoding?.[axisKey];
+              if (axEnc && axEnc.type === 'quantitative' && axEnc.field && smartSpec.mark !== 'arc') {
+                const vals = rawDataRows.map(r => Number(r[axEnc.field])).filter(v => !isNaN(v));
+                if (vals.length > 1) {
+                  const mn = Math.min(...vals), mx = Math.max(...vals), rng = mx - mn;
+                  if (mx > 0 && rng > 0 && rng / mx < 0.30) {
+                    const pad = rng * 0.15 || mx * 0.02;
+                    axEnc.scale = { zero: false, domain: [Math.max(0, mn - pad), mx + pad] };
+                  }
+                  if (mx >= 1000 && !axEnc.axis) axEnc.axis = { format: ',.0f' };
                 }
-                if (mx >= 1000 && !yEnc.axis) yEnc.axis = { format: ',.0f' };
               }
             }
             finalChart = smartSpec;
@@ -1191,7 +1192,16 @@ const PORT = process.env.PORT || 8080;
 
 
 // Serve static files from the React build folder
-app.use(express.static(path.join(__dirname, 'dist')));
+// Cache JS/CSS assets (hashed filenames) aggressively, but never cache index.html
+app.use(express.static(path.join(__dirname, 'dist'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  }
+}));
 
 // --- File Path for Local Data ---
 const dataFilePath = path.join(__dirname, 'configData.json');
@@ -4233,6 +4243,19 @@ app.post('/api/v1/access-request', async (req, res) => {
       }
     }
 
+    // Send confirmation notification to the requester
+    try {
+      await notificationService.createNotification({
+        recipientEmail: requesterEmail,
+        type: 'NEW_REQUEST',
+        title: 'Access Request Submitted',
+        message: `Your access request for ${assetName} has been submitted and is pending review.`,
+        metadata: { requestId: accessRequest.id, assetName, projectId }
+      });
+    } catch (notifErr) {
+      console.warn('[ACCESS-REQUEST] Requester confirmation notification failed:', notifErr.message);
+    }
+
     // Send access request email
     console.log('About to send access request email...');
     const emailResult = await sendAccessRequestEmail(
@@ -5213,6 +5236,7 @@ app.get('/api/v1/notifications', async (req, res) => {
     if (limit) filters.limit = parseInt(limit, 10);
 
     const notifications = await notificationService.getNotifications(userEmail, filters);
+    console.log(`[NOTIFICATIONS] GET for ${userEmail}: ${notifications.length} notifications found`);
 
     return res.status(200).json({
       success: true,
@@ -5344,8 +5368,9 @@ app.get('/', (req, res) => {
   res.redirect('/home'); // Redirects to the /home route
 });
 
-// For any other routes, serve the React index.html
+// For any other routes, serve the React index.html (no-cache to ensure latest build)
 app.get('{*path}', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
