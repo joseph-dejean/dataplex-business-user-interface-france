@@ -3464,9 +3464,10 @@ Return ONLY a JSON array of indices like [2,0,5,1,3,4,...], no explanation.`;
         console.log(`[SEARCH] Checked ${uniqueDatasets.size} datasets, access map:`, Object.fromEntries(datasetAccessCache));
 
         // Annotate each result based on BigQuery IAM only (single source of truth)
+        // Non-BQ entries (glossaries, data products, etc.) are always accessible — they're metadata
         annotatedResults = (searchResults || []).map(entry => {
           const ds = parseDataset(entry);
-          const hasAccess = ds ? (datasetAccessCache.get(ds.key) || false) : false;
+          const hasAccess = ds ? (datasetAccessCache.get(ds.key) || false) : true;
           return normalizeEntry(entry, hasAccess);
         });
       }
