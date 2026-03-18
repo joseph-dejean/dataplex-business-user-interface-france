@@ -135,12 +135,19 @@ const SubmitAccess: React.FC<SubmitAccessProps> = ({ isOpen, onClose, assetName,
 
       // Extract full resource path from entry for IAM provisioning
       // If requesting access to a specific asset within a data product, use its resource info
-      const linkedResource = requestedAsset?.resource || entry?.fullyQualifiedName || entry?.entrySource?.resource || '';
+      const linkedResource = requestedAsset?.resource
+        || entry?.fullyQualifiedName
+        || entry?.entrySource?.resource
+        || entry?.name  // Dataplex entry path fallback (works for data products)
+        || '';
 
       // Extract asset type from entry (e.g. "TABLE", "VIEW", "DATA_PRODUCT", etc.)
+      const entryTypeLower = (entry?.entryType || '').toLowerCase();
       const assetType = requestedAsset?.system
         ? `${requestedAsset.system} Asset`
-        : (entry?.entryType?.split('/')?.pop() || entry?.entryType || '');
+        : entryTypeLower.includes('product')
+          ? 'Data Product'
+          : (entry?.entryType?.split('/')?.pop() || entry?.entryType || '');
 
       // Build the display name for the ticket: include parent data product context if requesting a specific asset
       const ticketAssetName = requestedAsset

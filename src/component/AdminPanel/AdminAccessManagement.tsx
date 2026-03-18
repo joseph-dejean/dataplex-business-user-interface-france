@@ -97,6 +97,9 @@ const AdminAccessManagement = () => {
   const [newAdminProjects, setNewAdminProjects] = useState('');
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
+  const [singleRejectDialogOpen, setSingleRejectDialogOpen] = useState(false);
+  const [singleRejectRequestId, setSingleRejectRequestId] = useState<string | null>(null);
+  const [singleRejectReason, setSingleRejectReason] = useState('');
 
   // Statuses that represent "awaiting action" (needs approval or rejection)
   const AWAITING_STATUSES = ['PENDING', 'PARTIALLY_APPROVED'];
@@ -466,7 +469,7 @@ const AdminAccessManagement = () => {
                             <IconButton size="small" sx={{ backgroundColor: '#E6F4EA', color: '#137333' }} onClick={() => handleApprove(request.id)}>
                               <CheckCircle fontSize="small" />
                             </IconButton>
-                            <IconButton size="small" sx={{ backgroundColor: '#FCE8E6', color: '#C5221F' }} onClick={() => handleReject(request.id)}>
+                            <IconButton size="small" sx={{ backgroundColor: '#FCE8E6', color: '#C5221F' }} onClick={() => { setSingleRejectRequestId(request.id); setSingleRejectReason(''); setSingleRejectDialogOpen(true); }}>
                               <Cancel fontSize="small" />
                             </IconButton>
                           </Box>
@@ -654,12 +657,40 @@ const AdminAccessManagement = () => {
         </DialogActions>
       </Dialog>
 
+      {/* Single Reject Dialog */}
+      <Dialog open={singleRejectDialogOpen} onClose={() => setSingleRejectDialogOpen(false)}>
+        <DialogTitle>Reject Access Request</DialogTitle>
+        <DialogContent>
+          <Typography sx={{ mb: 2 }}>
+            Optionally provide a reason for rejecting this request:
+          </Typography>
+          <TextField
+            fullWidth
+            multiline
+            rows={3}
+            label="Reason (optional)"
+            value={singleRejectReason}
+            onChange={(e) => setSingleRejectReason(e.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSingleRejectDialogOpen(false)}>Cancel</Button>
+          <Button
+            onClick={() => { if (singleRejectRequestId) { handleReject(singleRejectRequestId, singleRejectReason); setSingleRejectDialogOpen(false); } }}
+            color="error"
+            variant="contained"
+          >
+            Reject
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {/* Bulk Reject Dialog */}
       <Dialog open={rejectDialogOpen} onClose={() => setRejectDialogOpen(false)}>
         <DialogTitle>Reject Access Requests</DialogTitle>
         <DialogContent>
           <Typography sx={{ mb: 2 }}>
-            You are about to reject {selectedRequests.length} request(s). Optionally provide a reason:
+            You are about to reject {selectedRequests.length} request(s). You can optionally provide a reason:
           </Typography>
           <TextField
             fullWidth

@@ -390,14 +390,17 @@ app.post('/api/v1/chat', async (req, res) => {
 
     if (existingConversationId) {
       // --- STATEFUL MODE: Resume existing conversation ---
-      // Google stores the history, we just send the new message
-      console.log(`[Stateful] Resuming conversation: ${existingConversationId}`);
+      // Build the full conversation path, handling both raw IDs and full paths
+      const conversationPath = existingConversationId.startsWith('projects/')
+        ? existingConversationId
+        : `projects/${projectId_env}/locations/${location}/conversations/${existingConversationId}`;
+      console.log(`[Stateful] Resuming conversation: ${conversationPath}`);
       if (dataAgentName) {
         chatPayload = {
           parent: `projects/${projectId_env}/locations/${location}`,
           messages: messages,
           conversationReference: {
-            conversation: `projects/${projectId_env}/locations/${location}/conversations/${existingConversationId}`,
+            conversation: conversationPath,
             dataAgentContext: {
               dataAgent: dataAgentName
             }
@@ -408,7 +411,7 @@ app.post('/api/v1/chat', async (req, res) => {
           parent: `projects/${projectId_env}/locations/${location}`,
           messages: messages,
           conversationReference: {
-            conversation: `projects/${projectId_env}/locations/${location}/conversations/${existingConversationId}`,
+            conversation: conversationPath,
             inlineContext: {
               datasourceReferences: bigqueryDataSource,
               systemInstruction: systemInstruction
@@ -631,6 +634,26 @@ app.post('/api/v1/chat', async (req, res) => {
                     console.log('[ChartBuilder] Date + category only, skipping chart');
                   } else {
                     console.log('[ChartBuilder] No suitable column combination for chart');
+                  }
+
+                  // Improve granularity for narrow data ranges
+                  if (vegaSpec && vegaSpec.encoding?.y?.type === 'quantitative' && numericCols.length > 0 && markType !== 'arc') {
+                    const numValues = dataRows.map(r => Number(r[numericCols[0]])).filter(v => !isNaN(v));
+                    if (numValues.length > 1) {
+                      const minVal = Math.min(...numValues);
+                      const maxVal = Math.max(...numValues);
+                      const range = maxVal - minVal;
+                      // If data range is narrow relative to max (<15%), use non-zero baseline with padding
+                      if (maxVal > 0 && range > 0 && range / maxVal < 0.15) {
+                        const padding = range * 0.15;
+                        vegaSpec.encoding.y.scale = { zero: false, domain: [Math.max(0, minVal - padding), maxVal + padding] };
+                        console.log(`[ChartBuilder] Narrow range detected (${minVal}-${maxVal}), using non-zero baseline`);
+                      }
+                      // Add number formatting for large values
+                      if (maxVal >= 1000) {
+                        vegaSpec.encoding.y.axis = { format: ',.0f' };
+                      }
+                    }
                   }
 
                   // For pie charts, adjust encoding
@@ -863,7 +886,8 @@ CRITICAL RULES:
 6. Do NOT include data values — set "data": {"values": []} as placeholder.
 7. Set width to 500 and height to 300.
 8. Add meaningful axis titles and a chart title.
-9. Return ONLY a valid JSON object OR the string null. No markdown, no explanation, no code fences.`;
+9. IMPORTANT: If numeric values are in a narrow range (e.g., all salaries between 170000-180000), set "scale": {"zero": false} on the quantitative axis so differences are visible. Add number formatting with "axis": {"format": ",.0f"} for large numbers.
+10. Return ONLY a valid JSON object OR the string null. No markdown, no explanation, no code fences.`;
 
         const chartResult = await chartModel.generateContent(chartPrompt);
         let chartSpecText = chartResult.response.candidates[0].content.parts[0].text.trim();
@@ -901,6 +925,19 @@ CRITICAL RULES:
             smartSpec.data = { values: rawDataRows };
             if (!smartSpec.$schema) {
               smartSpec.$schema = "https://vega.github.io/schema/vega-lite/v5.json";
+            }
+            // Apply narrow-range fix to Gemini-generated charts too
+            const yEnc = smartSpec.encoding?.y;
+            if (yEnc && yEnc.type === 'quantitative' && yEnc.field && smartSpec.mark !== 'arc') {
+              const vals = rawDataRows.map(r => Number(r[yEnc.field])).filter(v => !isNaN(v));
+              if (vals.length > 1) {
+                const mn = Math.min(...vals), mx = Math.max(...vals), rng = mx - mn;
+                if (mx > 0 && rng > 0 && rng / mx < 0.15) {
+                  const pad = rng * 0.15;
+                  yEnc.scale = { zero: false, domain: [Math.max(0, mn - pad), mx + pad] };
+                }
+                if (mx >= 1000 && !yEnc.axis) yEnc.axis = { format: ',.0f' };
+              }
             }
             finalChart = smartSpec;
             console.log('[SmartChart] Gemini-generated chart spec applied:', smartSpec.mark);
@@ -1030,6 +1067,55 @@ CRITICAL RULES:
       console.error("[CA_DEBUG] CA API Error Data:", JSON.stringify(err.response.data?.toString?.() || err.response.data, null, 2));
     }
 
+    // --- PERMISSION ERROR: Suggest alternative tables ---
+    const isPermissionError = err.response?.status === 403
+      || err.message?.includes('PERMISSION_DENIED')
+      || err.message?.includes('Access Denied')
+      || err.message?.includes('does not have permission');
+
+    if (isPermissionError) {
+      console.log('[CA_DEBUG] Permission error detected, searching for related accessible tables...');
+      let suggestions = [];
+      try {
+        // Extract keywords from the user's message to find related tables
+        const keywords = message.replace(/[^a-zA-Z0-9_ ]/g, '').split(/\s+/).filter(w => w.length > 3).slice(0, 5);
+        const searchQuery = keywords.length > 0 ? keywords.join(' ') : (context.name || '');
+        if (searchQuery) {
+          const suggestClient = new CatalogServiceClient();
+          const [suggestResponse] = await suggestClient.searchEntries({
+            name: `projects/${PROJECT_ID}/locations/global`,
+            query: searchQuery,
+            pageSize: 5,
+          });
+          const suggestResults = suggestResponse.results || suggestResponse || [];
+          suggestions = suggestResults
+            .filter(r => {
+              const entry = r.dataplexEntry || r;
+              const entryType = entry.entryType || '';
+              return entryType.toLowerCase().includes('table') || entryType.toLowerCase().includes('view');
+            })
+            .slice(0, 5)
+            .map(r => {
+              const entry = r.dataplexEntry || r;
+              return {
+                name: entry.fullyQualifiedName || entry.name || '',
+                displayName: entry.entrySource?.displayName || entry.name?.split('/').pop() || '',
+                description: (entry.entrySource?.description || '').substring(0, 150),
+              };
+            });
+        }
+      } catch (suggestErr) {
+        console.warn('[CA_DEBUG] Could not fetch suggestions:', suggestErr.message);
+      }
+
+      return res.status(200).json({
+        reply: `You don't have permission to query the table "${context.name || 'requested'}". Please request access or try one of the suggested tables below.`,
+        error: true,
+        permissionDenied: true,
+        suggestions,
+      });
+    }
+
     // --- FALLBACK MECHANISM ---
     // If the specialized API fails (Auth, 404, etc.), fallback to standard Gemini 1.5 Flash
     // This ensures the user always gets an answer.
@@ -1131,6 +1217,9 @@ app.post('/api/v1/ai-search', async (req, res) => {
       return res.status(400).json({ error: 'Query is required and must be at least 2 characters.' });
     }
 
+    // Truncate query for AI prompts to avoid token limit issues
+    const safeQuery = query.length > 500 ? query.substring(0, 500) + '...' : query;
+
     // Step 1: Use Gemini to understand the query and generate search terms
     const vertex_ai = new VertexAI({
       project: projectId,
@@ -1140,7 +1229,7 @@ app.post('/api/v1/ai-search', async (req, res) => {
 
     const aiPrompt = `You are a data catalog search assistant. Given a user's natural language query, extract the key search terms and concepts that would help find relevant database tables or datasets.
 
-User Query: "${query}"
+User Query: "${safeQuery}"
 
 Analyze the query and return a JSON object with:
 1. "searchTerms": array of individual keywords to search for (lowercase, no special characters)
@@ -1151,17 +1240,26 @@ Analyze the query and return a JSON object with:
 Return ONLY valid JSON, no markdown or explanations.
 Example output: {"searchTerms":["customer","orders","purchase"],"dataplexQuery":"customer orders purchase","intent":"customer order data","suggestedFilters":{}}`;
 
-    const aiResult = await generativeModel.generateContent(aiPrompt);
-    const aiResponseText = aiResult.response.candidates[0].content.parts[0].text.trim();
-
     let searchConfig;
     try {
-      // Clean markdown if present
-      let cleanJson = aiResponseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-      searchConfig = JSON.parse(cleanJson);
-    } catch (parseError) {
-      console.error('AI response parse error:', parseError, 'Response:', aiResponseText);
-      // Fallback to simple search
+      const aiResult = await generativeModel.generateContent(aiPrompt);
+      const aiResponseText = aiResult.response.candidates[0].content.parts[0].text.trim();
+
+      try {
+        // Clean markdown if present
+        let cleanJson = aiResponseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+        searchConfig = JSON.parse(cleanJson);
+      } catch (parseError) {
+        console.error('AI response parse error:', parseError, 'Response:', aiResponseText);
+        searchConfig = null;
+      }
+    } catch (aiError) {
+      console.warn('AI query understanding failed (falling back to simple search):', aiError.message);
+      searchConfig = null;
+    }
+
+    // Fallback to simple search if AI failed
+    if (!searchConfig) {
       searchConfig = {
         searchTerms: query.toLowerCase().split(/\s+/).filter(t => t.length > 2),
         dataplexQuery: query,
@@ -1204,8 +1302,9 @@ Rank these data entries by relevance (most relevant first). Return a JSON array 
 Entries:
 ${results.slice(0, 15).map((r, i) => {
         const entry = r.dataplexEntry || r;
+        const desc = entry.entrySource?.description || 'No description';
         return `${i}. Name: ${entry.entrySource?.displayName || entry.name?.split('/').pop() || 'Unknown'}
-     Description: ${entry.entrySource?.description || 'No description'}
+     Description: ${desc.length > 200 ? desc.substring(0, 200) + '...' : desc}
      Type: ${entry.entryType || 'Unknown'}`;
       }).join('\n')}
 
@@ -4402,6 +4501,19 @@ app.post('/api/v1/access-request/update', async (req, res) => {
       }
     } catch (emailError) {
       console.warn('[UPDATE] Email notification failed (non-blocking):', emailError.message);
+    }
+
+    // --- SEND IN-APP NOTIFICATION ---
+    try {
+      if (effectiveStatus === 'APPROVED') {
+        await notificationService.notifyAccessApproved(updatedRequest, reviewerEmail);
+      } else if (effectiveStatus === 'REJECTED') {
+        await notificationService.notifyAccessRejected(updatedRequest, reviewerEmail, adminNote);
+      } else if (effectiveStatus === 'REVOKED') {
+        await notificationService.notifyAccessRevoked(updatedRequest, reviewerEmail);
+      }
+    } catch (notifError) {
+      console.warn('[UPDATE] In-app notification failed (non-blocking):', notifError.message);
     }
 
     return res.json({

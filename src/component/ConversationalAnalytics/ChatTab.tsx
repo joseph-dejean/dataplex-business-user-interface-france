@@ -305,10 +305,19 @@ const ChatTab: React.FC<ChatTabProps> = ({ entry, tables }) => {
         setConversationId(res.data.conversationId);
       }
 
+      // Build reply content — append table suggestions if permission was denied
+      let replyContent = res.data.reply || 'No response received.';
+      if (res.data.permissionDenied && res.data.suggestions?.length > 0) {
+        replyContent += '\n\n**Suggested tables you may have access to:**\n';
+        res.data.suggestions.forEach((s: any) => {
+          replyContent += `\n- **${s.displayName || s.name}**${s.description ? ': ' + s.description : ''}`;
+        });
+      }
+
       // Add assistant response to UI
       const assistantMsg: Message = {
         role: 'assistant',
-        content: res.data.reply || 'No response received.',
+        content: replyContent,
         timestamp: new Date(),
         chart: res.data.chart || null,
         data: res.data.data || null

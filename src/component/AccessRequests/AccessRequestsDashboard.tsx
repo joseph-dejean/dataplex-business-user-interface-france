@@ -385,23 +385,38 @@ const AccessRequestsDashboard: React.FC = () => {
                     <TableCell>
                       <Typography variant="body2" sx={{ color: '#1F1F1F' }}>{request.requesterEmail}</Typography>
                       {request.serviceNowTicket && request.serviceNowTicket !== 'ERROR-CREATING-SN' && (
-                        <Tooltip title={`ServiceNow: ${request.serviceNowState || 'Click to view'}`}>
-                          <Chip
-                            label={`SN: ${request.serviceNowTicket}${request.serviceNowState ? ' - ' + request.serviceNowState : ''}`}
-                            size="small"
-                            variant="outlined"
-                            clickable={!!request.serviceNowLink}
-                            onClick={() => request.serviceNowLink && window.open(request.serviceNowLink, '_blank')}
-                            sx={{
-                              fontSize: '10px', height: '20px', mt: 0.5,
-                              borderColor: request.serviceNowState === 'Approved' ? '#34A853' :
-                                request.serviceNowState === 'Rejected' ? '#EA4335' : '#1A73E8',
-                              color: request.serviceNowState === 'Approved' ? '#34A853' :
-                                request.serviceNowState === 'Rejected' ? '#EA4335' : '#1A73E8',
-                              cursor: request.serviceNowLink ? 'pointer' : 'default'
-                            }}
-                          />
-                        </Tooltip>
+                        request.serviceNowTicket.startsWith('MOCK-SN-') ? (
+                          <Tooltip title="ServiceNow integration is not configured. Contact your administrator to enable it.">
+                            <Chip
+                              label="SN: Not configured"
+                              size="small"
+                              variant="outlined"
+                              sx={{
+                                fontSize: '10px', height: '20px', mt: 0.5,
+                                borderColor: '#9AA0A6', color: '#9AA0A6',
+                                cursor: 'default'
+                              }}
+                            />
+                          </Tooltip>
+                        ) : (
+                          <Tooltip title={`ServiceNow: ${request.serviceNowState || 'Click to view'}`}>
+                            <Chip
+                              label={`SN: ${request.serviceNowTicket}${request.serviceNowState ? ' - ' + request.serviceNowState : ''}`}
+                              size="small"
+                              variant="outlined"
+                              clickable={!!request.serviceNowLink}
+                              onClick={() => request.serviceNowLink && window.open(request.serviceNowLink, '_blank')}
+                              sx={{
+                                fontSize: '10px', height: '20px', mt: 0.5,
+                                borderColor: request.serviceNowState === 'Approved' ? '#34A853' :
+                                  request.serviceNowState === 'Rejected' ? '#EA4335' : '#1A73E8',
+                                color: request.serviceNowState === 'Approved' ? '#34A853' :
+                                  request.serviceNowState === 'Rejected' ? '#EA4335' : '#1A73E8',
+                                cursor: request.serviceNowLink ? 'pointer' : 'default'
+                              }}
+                            />
+                          </Tooltip>
+                        )
                       )}
                     </TableCell>
                     <TableCell>

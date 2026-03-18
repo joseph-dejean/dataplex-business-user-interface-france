@@ -88,6 +88,7 @@ const triggerDocumentationScan = async (billingProject, location, bqProject, bqD
  * This avoids needing to know the exact entry name/location format.
  */
 const lookupEntryByFqn = async (client, billingProject, fqn) => {
+    // Step 1: Use searchEntries to discover the entry's actual name and location
     const searchQuery = `fully_qualified_name=${fqn}`;
     try {
         const [response] = await client.searchEntries({
@@ -97,7 +98,22 @@ const lookupEntryByFqn = async (client, billingProject, fqn) => {
         });
         const results = response.results || response;
         if (results && results.length > 0) {
-            return results[0].dataplexEntry || results[0];
+            const searchResult = results[0].dataplexEntry || results[0];
+            const entryName = searchResult.name;
+            if (entryName) {
+                // Step 2: Fetch the FULL entry with aspects using the discovered name
+                console.log(`[RELATIONSHIPS] Found entry via search, fetching full entry: ${entryName}`);
+                try {
+                    const [fullEntry] = await client.getEntry({
+                        name: entryName,
+                        view: protos.google.cloud.dataplex.v1.EntryView.ALL
+                    });
+                    if (fullEntry) return fullEntry;
+                } catch (getErr) {
+                    console.warn(`[RELATIONSHIPS] getEntry failed for ${entryName}:`, getErr.message);
+                    // Fall through to location-based fallback
+                }
+            }
         }
     } catch (err) {
         console.warn(`[RELATIONSHIPS] searchEntries failed for ${fqn}:`, err.message);
