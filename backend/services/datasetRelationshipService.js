@@ -185,7 +185,23 @@ const inferRelationshipsFromSchema = async (bqProject, bqDataset, tableNames) =>
             WHERE table_name IN UNNEST(@tableNames)
             ORDER BY table_name, ordinal_position
         `;
-        const [rows] = await bq.query({ query, params: { tableNames }, location: 'EU' });
+        // Try without explicit location first (auto-detect), then fall back to common locations
+        let rows;
+        const locations = [undefined, 'EU', 'US', 'europe-west1', 'us-central1'];
+        for (const loc of locations) {
+            try {
+                const opts = { query, params: { tableNames } };
+                if (loc) opts.location = loc;
+                const [result] = await bq.query(opts);
+                rows = result;
+                console.log(`[RELATIONSHIPS] BQ INFORMATION_SCHEMA query succeeded${loc ? ` (location: ${loc})` : ' (auto-detect)'}`);
+                break;
+            } catch (locErr) {
+                if (loc === locations[locations.length - 1]) throw locErr;
+                // Try next location
+            }
+        }
+        if (!rows) rows = [];
 
         // Build a map of table -> columns
         const tableColumns = {};

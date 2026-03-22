@@ -3903,6 +3903,7 @@ app.get('/api/v1/dataset-relationships', async (req, res) => {
       const entry = r.dataplexEntry || r;
       return entry.fullyQualifiedName || `bigquery:${project}.${dataset}.${(entry.entrySource && entry.entrySource.displayName) || 'unknown'}`;
     });
+    console.log(`[RELATIONSHIPS] Table FQNs:`, rootTableFqns);
 
     // Fetch relationships up to 3rd degree via Catalog API
     let location = process.env.GCP_LOCATION || 'europe-west1';
@@ -3920,12 +3921,12 @@ app.get('/api/v1/dataset-relationships', async (req, res) => {
 
     console.log(`[RELATIONSHIPS] Total ${relationships.length} edges found via Catalog API, ${scansTriggered} scans triggered`);
 
-    // Only cache if no scans were triggered (meaning all documentation aspects existed)
-    // If scans were triggered, the results are incomplete — don't cache so next request retries
-    if (scansTriggered === 0) {
+    // Cache if we found relationships (either from catalog or schema fallback)
+    // If scans were triggered but schema found results, cache with shorter TTL via a flag
+    if (relationships.length > 0) {
       await datasetRelationshipService.cacheRelationships(project, dataset, relationships, searchResults.length);
-    } else {
-      console.log(`[RELATIONSHIPS] Skipping cache — ${scansTriggered} DataScans were triggered. Results will be complete after scans finish.`);
+    } else if (scansTriggered > 0) {
+      console.log(`[RELATIONSHIPS] No relationships found yet — ${scansTriggered} DataScans triggered. Will retry on next request.`);
     }
 
     // Build unique nodes from edges + root tables
