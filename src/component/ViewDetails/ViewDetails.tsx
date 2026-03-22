@@ -291,7 +291,7 @@ const ViewDetails = () => {
         const entriesIndex = displayEntry.name.indexOf('/entries/');
         if (entriesIndex !== -1) {
           const entriesPrefix = displayEntry.name.substring(0, entriesIndex + 9);
-          const newEntryName = `${entriesPrefix}bigquery_${project}_${dataset}_${tableName}`;
+          const newEntryName = `${entriesPrefix}bigquery.googleapis.com/projects/${project}/datasets/${dataset}/tables/${tableName}`;
           dispatch(fetchEntry({ entryName: newEntryName, id_token: id_token || '' }));
           return;
         }
