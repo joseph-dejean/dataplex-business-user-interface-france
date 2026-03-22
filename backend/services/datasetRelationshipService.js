@@ -210,6 +210,11 @@ const inferRelationshipsFromSchema = async (bqProject, bqDataset, tableNames) =>
             tableColumns[row.table_name].push(row.column_name.toLowerCase());
         }
 
+        // Log columns for debugging
+        for (const [tbl, cols] of Object.entries(tableColumns)) {
+            console.log(`[RELATIONSHIPS] Table "${tbl}" columns: ${cols.join(', ')}`);
+        }
+
         const tableNamesLower = tableNames.map(t => t.toLowerCase());
         const seen = new Set();
 
@@ -225,18 +230,22 @@ const inferRelationshipsFromSchema = async (bqProject, bqDataset, tableNames) =>
                         `${otherTable}id`,
                         `fk_${otherTable}`,
                         `${otherTable}_fk`,
+                        `id_${otherTable}`,
                     ];
                     // Also handle singular forms: if table is "departments", check "department_id"
                     const singular = otherTable.endsWith('s') ? otherTable.slice(0, -1) : otherTable;
                     if (singular !== otherTable) {
-                        patterns.push(`${singular}_id`, `${singular}_key`, `${singular}id`);
+                        patterns.push(`${singular}_id`, `${singular}_key`, `${singular}id`, `id_${singular}`);
                     }
+                    // Handle underscored table names: "job_history" -> check "job_history_id"
+                    // Also check partial matches: column contains the table name
+                    // e.g., column "dept_id" for table "department" won't match exact patterns,
+                    // but column "employee_id" for table "employee" will
 
                     if (patterns.includes(col)) {
                         const edgeKey = [tableName, otherTable].sort().join('|');
                         if (!seen.has(edgeKey)) {
                             seen.add(edgeKey);
-                            // Find the actual case table name
                             const actualOther = tableNames.find(t => t.toLowerCase() === otherTable) || otherTable;
                             relationships.push({
                                 table1: tableName,
@@ -245,6 +254,31 @@ const inferRelationshipsFromSchema = async (bqProject, bqDataset, tableNames) =>
                                 confidence: 'medium (schema)',
                                 source: 'Schema Column Analysis'
                             });
+                        }
+                    }
+                }
+
+                // Also check: any column ending with _id where the prefix matches any table name
+                // e.g., "dept_id" -> check if any table starts with "dept" (abbreviation matching)
+                if (col.endsWith('_id') || col.endsWith('_key')) {
+                    const prefix = col.replace(/_id$/, '').replace(/_key$/, '');
+                    for (const otherTable of tableNamesLower) {
+                        if (otherTable === tableName.toLowerCase()) continue;
+                        // Check if table name starts with the prefix or prefix starts with table name
+                        // e.g., "dept" matches "department", "emp" matches "employee"
+                        if (otherTable.startsWith(prefix) || prefix.startsWith(otherTable.substring(0, 3))) {
+                            const edgeKey = [tableName, otherTable].sort().join('|');
+                            if (!seen.has(edgeKey)) {
+                                seen.add(edgeKey);
+                                const actualOther = tableNames.find(t => t.toLowerCase() === otherTable) || otherTable;
+                                relationships.push({
+                                    table1: tableName,
+                                    table2: actualOther,
+                                    relationship: `Inferred from column: ${tableName}.${col}`,
+                                    confidence: 'low (pattern)',
+                                    source: 'Schema Column Analysis'
+                                });
+                            }
                         }
                     }
                 }
