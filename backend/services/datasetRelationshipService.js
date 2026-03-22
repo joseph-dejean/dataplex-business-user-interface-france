@@ -105,6 +105,53 @@ const inferRelationships = (tables) => {
         }
     }
 
+    // --- Phase 2: Shared column detection ---
+    // If two tables share the same column name (e.g., department_id in both
+    // employee and job_history), they are likely related through that column.
+    const columnToTables = {}; // column_name → [table1, table2, ...]
+    for (const table of tables) {
+        if (!table.schema || !Array.isArray(table.schema)) continue;
+        for (const column of table.schema) {
+            const colName = (column.name || '').toLowerCase();
+            // Only consider columns that look like join keys (_id, _key, _fk, _ref, or just "id")
+            const isJoinKey = colName.endsWith('_id') || colName.endsWith('_key') ||
+                colName.endsWith('_fk') || colName.endsWith('_ref') ||
+                colName === 'id';
+            if (!isJoinKey) continue;
+
+            if (!columnToTables[colName]) columnToTables[colName] = [];
+            columnToTables[colName].push(table.name);
+        }
+    }
+
+    // For each shared column, create relationships between the tables that share it
+    for (const [colName, tablesWithCol] of Object.entries(columnToTables)) {
+        if (tablesWithCol.length < 2) continue;
+
+        for (let i = 0; i < tablesWithCol.length; i++) {
+            for (let j = i + 1; j < tablesWithCol.length; j++) {
+                const t1 = tablesWithCol[i];
+                const t2 = tablesWithCol[j];
+
+                // Skip if this relationship already exists from Phase 1
+                const exists = relationships.some(r =>
+                    (r.table1 === t1 && r.table2 === t2) ||
+                    (r.table1 === t2 && r.table2 === t1)
+                );
+
+                if (!exists) {
+                    relationships.push({
+                        table1: t1,
+                        table2: t2,
+                        relationship: `Shared column: ${colName}`,
+                        confidence: 'medium',
+                        source: 'shared_column'
+                    });
+                }
+            }
+        }
+    }
+
     return relationships;
 };
 
