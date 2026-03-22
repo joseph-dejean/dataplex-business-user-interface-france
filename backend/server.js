@@ -3838,7 +3838,8 @@ app.get('/api/v1/lineage', async (req, res) => {
 /**
  * GET /api/v1/dataset-relationships
  * Get inferred relationships between tables in a dataset.
- * Uses schema analysis to detect FK-like columns and caches results in Firestore.
+ * Uses BigQuery table metadata schema analysis to detect FK-like columns.
+ * Caches results in Firestore.
  *
  * Query params:
  * - project: GCP project ID (required)
@@ -3871,26 +3872,29 @@ app.get('/api/v1/dataset-relationships', async (req, res) => {
       }
     }
 
-    // Fetch all tables in the dataset using Dataplex Universal Catalog searchEntries
-    console.log(`[RELATIONSHIPS] Cache miss, fetching tables from Dataplex Catalog...`);
-    const relCatalogClient = new CatalogServiceClient();
+    // Fetch all tables in the dataset using Data Catalog search
+    console.log(`[RELATIONSHIPS] Cache miss, fetching tables from Data Catalog...`);
 
-    const searchQuery = `system=bigquery type=TABLE fully_qualified_name:bigquery:${project}.${dataset}`;
-    const [searchResponse] = await relCatalogClient.searchEntries({
-      name: `projects/${PROJECT_ID}/locations/global`,
+    const dataCatalogClient = new DataCatalogClient();
+    const bigquery = new BigQuery({ projectId: project });
+
+    // Search for all tables in this dataset
+    const searchQuery = `system=bigquery type=TABLE parent:${project}.${dataset}`;
+
+    const [searchResults] = await dataCatalogClient.searchCatalog({
+      scope: {
+        includeProjectIds: [project, PROJECT_ID],
+        includeGcpPublicDatasets: false
+      },
       query: searchQuery,
-      pageSize: 100,
+      pageSize: 100
     });
-
-    const searchResults = searchResponse.results || searchResponse || [];
 
     console.log(`[RELATIONSHIPS] Found ${searchResults.length} tables in ${project}.${dataset}`);
 
     if (!searchResults || searchResults.length === 0) {
       return res.json({
         relationships: [],
-        nodes: [],
-        edges: [],
         source: 'inferred',
         message: 'No tables found in dataset',
         project,
@@ -3898,56 +3902,78 @@ app.get('/api/v1/dataset-relationships', async (req, res) => {
       });
     }
 
-    // Extract table FQNs from Dataplex search results
-    const rootTableFqns = searchResults.map(r => {
-      const entry = r.dataplexEntry || r;
-      return entry.fullyQualifiedName || `bigquery:${project}.${dataset}.${(entry.entrySource && entry.entrySource.displayName) || 'unknown'}`;
-    });
-    console.log(`[RELATIONSHIPS] Table FQNs:`, rootTableFqns);
+    // Fetch schema for each table using BigQuery directly
+    const tables = [];
+    for (const result of searchResults) {
+      try {
+        // Extract table name from FQN like "bigquery:project.dataset.table"
+        const fqn = result.fullyQualifiedName || '';
+        const tableName = fqn.split('.').pop() || result.displayName || 'unknown';
 
-    // Fetch relationships up to 3rd degree via Catalog API
-    let location = process.env.GCP_LOCATION || 'europe-west1';
-    const billingProject = PROJECT_ID; // Billing project for API calls
+        // Get table schema from BigQuery
+        const [metadata] = await bigquery.dataset(dataset).table(tableName).getMetadata();
+        const schema = (metadata.schema?.fields || []).map(f => ({
+          name: f.name,
+          type: f.type
+        }));
 
-    const result = await datasetRelationshipService.fetchRelationshipsFromCatalog(
-      billingProject,
-      location,
-      rootTableFqns,
-      3 // max degree
-    );
-
-    const relationships = result.relationships;
-    const scansTriggered = result.scansTriggered || 0;
-
-    console.log(`[RELATIONSHIPS] Total ${relationships.length} edges found via Catalog API, ${scansTriggered} scans triggered`);
-
-    // Cache if we found relationships (either from catalog or schema fallback)
-    // If scans were triggered but schema found results, cache with shorter TTL via a flag
-    if (relationships.length > 0) {
-      await datasetRelationshipService.cacheRelationships(project, dataset, relationships, searchResults.length);
-    } else if (scansTriggered > 0) {
-      console.log(`[RELATIONSHIPS] No relationships found yet — ${scansTriggered} DataScans triggered. Will retry on next request.`);
+        tables.push({
+          name: tableName,
+          fullyQualifiedName: fqn,
+          schema
+        });
+      } catch (entryErr) {
+        console.warn(`[RELATIONSHIPS] Failed to get schema for table ${result.fullyQualifiedName}:`, entryErr.message);
+      }
     }
 
-    // Build unique nodes from edges + root tables
+    console.log(`[RELATIONSHIPS] Got schemas for ${tables.length} tables`);
+
+    // Log table columns for debugging
+    for (const t of tables) {
+      console.log(`[RELATIONSHIPS] Table "${t.name}" columns: ${t.schema.map(c => c.name).join(', ')}`);
+    }
+
+    // Infer relationships from schemas
+    const inferredRelationships = datasetRelationshipService.inferRelationships(tables);
+
+    // Fetch relationships from DataScans
+    let location = process.env.GCP_LOCATION || '-';
+    const scanRelationships = await datasetRelationshipService.fetchDataScanRelationships(project, location, tables);
+
+    // Combine avoiding duplicates
+    const relationships = [...inferredRelationships];
+    for (const scanRel of scanRelationships) {
+      const exists = relationships.some(r =>
+        (r.table1 === scanRel.table1 && r.table2 === scanRel.table2) ||
+        (r.table1 === scanRel.table2 && r.table2 === scanRel.table1)
+      );
+      if (!exists) {
+        relationships.push(scanRel);
+      }
+    }
+
+    console.log(`[RELATIONSHIPS] Total ${relationships.length} relationships (${inferredRelationships.length} inferred, ${scanRelationships.length} from DataScans)`);
+
+    // Cache the results
+    if (relationships.length > 0) {
+      await datasetRelationshipService.cacheRelationships(project, dataset, relationships, tables);
+    }
+
+    // Build unique nodes from edges + all tables
     const nodeSet = new Set();
-    rootTableFqns.forEach(fqn => {
-      const parts = fqn.replace('bigquery:', '').replace('bigquery://', '').split('.');
-      if (parts.length >= 3) nodeSet.add(parts[2]);
-    });
+    tables.forEach(t => nodeSet.add(t.name));
     relationships.forEach(r => {
       nodeSet.add(r.table1);
       nodeSet.add(r.table2);
     });
 
     res.json({
-      relationships, // Keep backward compatible field
+      relationships,
       nodes: Array.from(nodeSet).map(id => ({ id, label: id })),
       edges: relationships,
-      source: 'catalog_documentation',
-      tableCount: searchResults.length,
-      scansTriggered, // Tell frontend if scans are pending
-      message: scansTriggered > 0 ? `${scansTriggered} DataScans triggered. Relationships will appear after scans complete (usually a few minutes). Refresh to check.` : undefined,
+      source: 'inferred',
+      tableCount: tables.length,
       project,
       dataset
     });
