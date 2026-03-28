@@ -28,6 +28,7 @@ backend/dist
 .env.development.local
 backend/.env
 backend/.env.*
+deploy.env
 
 # Editor directories and files
 .vscode/*

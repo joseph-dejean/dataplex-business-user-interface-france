@@ -151,7 +151,26 @@ gcloud artifacts repositories create dataplex-ui-repo \
    - `_GCP_LOCATION`: region for Dataplex resources (e.g., `europe-west1`)
    - `_GCP_REGION`: same as above
 
-### Option B: Manual deployment
+### Option B: One-command deploy script (recommended)
+
+```bash
+# 1. Copy and fill in the config
+cp deploy.env.example deploy.env
+# Edit deploy.env with your values (project ID, OAuth credentials, admin email)
+
+# 2. Deploy
+chmod +x deploy.sh
+./deploy.sh --config deploy.env
+```
+
+The script handles everything: enables APIs, creates Artifact Registry, builds the Docker image, deploys to Cloud Run, and prints the URL.
+
+Use `--cloud-build` to build remotely instead of locally:
+```bash
+./deploy.sh --config deploy.env --cloud-build
+```
+
+### Option C: Manual deployment
 
 ```bash
 # 1. Authenticate
@@ -174,7 +193,7 @@ gcloud run deploy dataplex-ui \
 
 4. **Update OAuth redirect URIs** with the Cloud Run URL (e.g., `https://dataplex-ui-xxxxx.run.app`)
 
-### Option C: Using GitHub Actions
+### Option D: Using GitHub Actions
 
 The repo includes `.github/workflows/deploy.yml`. Configure these GitHub secrets:
 - `GCP_PROJECT_ID`
