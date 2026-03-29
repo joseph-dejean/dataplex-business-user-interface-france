@@ -250,6 +250,12 @@ ENV_VARS+=",GCP_LOCATION=${GCP_LOCATION}"
 ENV_VARS+=",GCP_REGION=${GCP_REGION}"
 ENV_VARS+=",SUPER_ADMIN_EMAIL=${ADMIN_EMAIL}"
 
+# Add external projects if configured
+if [[ -n "$EXTERNAL_PROJECTS" ]]; then
+  ENV_VARS+=",EXTERNAL_PROJECTS=${EXTERNAL_PROJECTS}"
+  info "External projects: ${EXTERNAL_PROJECTS}"
+fi
+
 info "Deploying service..."
 gcloud run deploy "$SERVICE_NAME" \
   --image="${IMAGE_URI}:${IMAGE_TAG}" \

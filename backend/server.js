@@ -46,6 +46,26 @@ if (!PROJECT_ID) {
   console.log(`[STARTUP] Project ID resolved: ${PROJECT_ID}`);
 }
 
+// --- EXTERNAL PROJECTS ---
+// Parse external projects from environment variable (space or comma separated)
+const EXTERNAL_PROJECTS_RAW = process.env.EXTERNAL_PROJECTS || '';
+const EXTERNAL_PROJECTS = EXTERNAL_PROJECTS_RAW
+  .split(/[\s,]+/)
+  .map(p => p.trim())
+  .filter(p => p.length > 0 && p !== PROJECT_ID);
+
+if (EXTERNAL_PROJECTS.length > 0) {
+  console.log(`[STARTUP] External projects configured: ${EXTERNAL_PROJECTS.join(', ')}`);
+} else {
+  console.log('[STARTUP] No external projects configured');
+}
+
+// Get all searchable projects (main + external)
+const getAllProjects = () => {
+  const projects = [PROJECT_ID, ...EXTERNAL_PROJECTS].filter(p => p);
+  return [...new Set(projects)]; // Remove duplicates
+};
+
 // Helper function for consistent project ID access throughout the codebase
 const getProjectId = () => PROJECT_ID;
 
@@ -1280,9 +1300,10 @@ Example output: {"searchTerms":["customer","orders","purchase"],"dataplexQuery":
 
     console.log('AI Search Config:', searchConfig);
 
-    // Step 2: Search Dataplex with the AI-generated query
+    // Step 2: Search Dataplex with the AI-generated query across ALL projects
     const auth = new AdcGoogleAuth();
     const dataplexClient = new CatalogServiceClient({ auth });
+    const allProjects = getAllProjects();
 
     // Build search query based on type
     let searchQuery = searchConfig.dataplexQuery || query;
@@ -1292,16 +1313,38 @@ Example output: {"searchTerms":["customer","orders","purchase"],"dataplexQuery":
       searchQuery += ' AND NOT type="data_product"';
     }
 
-    const searchRequest = {
-      name: `projects/${projectId}/locations/global`,
-      query: searchQuery,
-      pageSize: 20
-    };
+    console.log(`[AI-SEARCH] Searching across ${allProjects.length} projects: ${allProjects.join(', ')}`);
 
-    console.log('Dataplex Search Request:', searchRequest);
+    // Search across all projects and merge results
+    const searchPromises = allProjects.map(async (projId) => {
+      try {
+        const searchRequest = {
+          name: `projects/${projId}/locations/global`,
+          query: searchQuery,
+          pageSize: 20
+        };
+        const [searchResponse] = await dataplexClient.searchEntries(searchRequest);
+        console.log(`[AI-SEARCH] Project ${projId}: found ${searchResponse.results?.length || 0} results`);
+        return searchResponse.results || [];
+      } catch (err) {
+        console.warn(`[AI-SEARCH] Failed to search project ${projId}:`, err.message);
+        return [];
+      }
+    });
 
-    const [searchResponse] = await dataplexClient.searchEntries(searchRequest);
-    let results = searchResponse.results || [];
+    const allResults = await Promise.all(searchPromises);
+    let results = allResults.flat();
+
+    // Remove duplicates based on entry name
+    const seenNames = new Set();
+    results = results.filter(entry => {
+      const name = entry?.dataplexEntry?.name || entry?.name;
+      if (!name || seenNames.has(name)) return false;
+      seenNames.add(name);
+      return true;
+    });
+
+    console.log(`[AI-SEARCH] Total unique results: ${results.length}`);
 
     // Step 3: If we have results, use Gemini to rank them by relevance
     if (results.length > 0) {
@@ -3189,12 +3232,12 @@ app.post('/api/v1/search', async (req, res) => {
     const isAdmin = await checkUserAdminRole(userEmail);
     console.log(`[SEARCH] Is Admin (User/IAM)? ${isAdmin}`);
 
-    // Fetch ALL results (Service Account Scope)
+    // Fetch ALL results (Service Account Scope) - search across all projects
     const client = new CatalogServiceClient();
-    const projectId = PROJECT_ID;
+    const allProjects = getAllProjects();
     const location = 'global';
 
-    if (!projectId) {
+    if (allProjects.length === 0) {
       console.error('[SEARCH] CRITICAL: No project ID found in environment variables!');
       return res.status(500).json({
         success: false,
@@ -3204,7 +3247,7 @@ app.post('/api/v1/search', async (req, res) => {
       });
     }
 
-    console.log(`[SEARCH] Using Project: ${projectId}, Location: ${location}`);
+    console.log(`[SEARCH] Searching across ${allProjects.length} projects: ${allProjects.join(', ')}, Location: ${location}`);
 
     let searchQuery = query || '*';
     let intent = '';
@@ -3258,21 +3301,43 @@ Example output: {"searchTerms":["customer","orders","purchase"],"dataplexQuery":
       }
     }
 
-    const request = {
-      name: `projects/${projectId}/locations/${location}`,
-      query: searchQuery,
-      pageSize: semanticSearch ? 100 : (pageSize || 20),
-      pageToken: pageToken
-    };
+    // Search across all projects and merge results
+    const searchPromises = allProjects.map(async (projId) => {
+      try {
+        const request = {
+          name: `projects/${projId}/locations/${location}`,
+          query: searchQuery,
+          pageSize: semanticSearch ? 50 : (pageSize || 20),
+          pageToken: pageToken
+        };
+        const [results] = await client.searchEntries(request);
+        console.log(`[SEARCH] Project ${projId}: found ${results ? results.length : 0} results`);
+        return results || [];
+      } catch (err) {
+        console.warn(`[SEARCH] Failed to search project ${projId}:`, err.message);
+        return [];
+      }
+    });
 
-    let [searchResults, searchRequest, searchResponse] = await client.searchEntries(request);
-    console.log(`[SEARCH] Fetched ${searchResults ? searchResults.length : 0} results from Data Catalog`);
+    const allResults = await Promise.all(searchPromises);
+    let searchResults = allResults.flat();
+
+    // Remove duplicates based on entry name
+    const seen = new Set();
+    searchResults = searchResults.filter(entry => {
+      const name = entry?.dataplexEntry?.name || entry?.name;
+      if (!name || seen.has(name)) return false;
+      seen.add(name);
+      return true;
+    });
+
+    console.log(`[SEARCH] Total unique results from all projects: ${searchResults.length}`);
 
     // --- AI RANKING LOGIC ---
     if (semanticSearch && searchResults && searchResults.length > 0 && intent) {
       try {
         const vertex_ai = new VertexAI({
-          project: projectId,
+          project: PROJECT_ID,
           location: process.env.GCP_LOCATION || 'europe-west1'
         });
         const generativeModel = vertex_ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
