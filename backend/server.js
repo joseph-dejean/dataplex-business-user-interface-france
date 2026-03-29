@@ -3624,20 +3624,12 @@ app.get('/api/v1/accessible-tables', async (req, res) => {
 
     const isAdmin = await checkUserAdminRole(userEmail); // Check if user is a Dataplex Admin
 
-    // 1. Fetch all configured projects (mirroring app-configs logic)
-    const resourceManagerClient = new ProjectsClient();
-    let projects = [];
-    try {
-      const [projectList] = await resourceManagerClient.searchProjects({ pageSize: 2000 }, { autoPaginate: false });
-      // Ensure current PROJECT_ID is included if not in search results
-      const currentExists = projectList.find(p => p.projectId === PROJECT_ID);
-      projects = currentExists ? projectList : [...projectList, { projectId: PROJECT_ID }];
-    } catch (err) {
-      console.warn('[ACCESSIBLE-TABLES] Failed to list projects, falling back to current project:', err.message);
-      projects = [{ projectId: PROJECT_ID }];
-    }
+    // 1. Get all configured projects (main + external)
+    // Use getAllProjects() which includes EXTERNAL_PROJECTS env var
+    const allProjectIds = getAllProjects();
+    const projects = allProjectIds.map(id => ({ projectId: id }));
 
-    console.log(`[ACCESSIBLE-TABLES] Searching across ${projects.length} projects: ${projects.map(p => p.projectId).join(', ')}`);
+    console.log(`[ACCESSIBLE-TABLES] Searching across ${projects.length} projects: ${allProjectIds.join(', ')}`);
 
     // 2. Search for TABLE and VIEW entries in EACH project
     const client = new CatalogServiceClient();
