@@ -29,6 +29,9 @@ backend/dist
 backend/.env
 backend/.env.*
 deploy.env
+deployment/config.env
+deployment/deploy.env
+deployment/external-projects-commands.sh
 
 # Editor directories and files
 .vscode/*

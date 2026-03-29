@@ -21,7 +21,10 @@ if [ -f "config.env" ]; then
     source config.env
 else
     echo -e "${RED}ERROR: config.env not found!${NC}"
-    echo "Please edit config.env with your values first."
+    echo ""
+    echo "Create it from the example:"
+    echo "  cp config.env.example config.env"
+    echo "  nano config.env"
     exit 1
 fi
 

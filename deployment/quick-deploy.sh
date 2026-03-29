@@ -24,8 +24,9 @@ echo ""
 if [ ! -f "$SCRIPT_DIR/config.env" ]; then
     echo -e "${RED}ERROR: config.env not found!${NC}"
     echo ""
-    echo "Edit config.env first:"
-    echo "  nano $SCRIPT_DIR/config.env"
+    echo "Create it from the example:"
+    echo "  cp config.env.example config.env"
+    echo "  nano config.env"
     exit 1
 fi
 

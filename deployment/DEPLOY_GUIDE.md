@@ -2,13 +2,17 @@
 
 ## Quick Start (3 Steps)
 
-### Step 1: Edit config.env
-
-Just replace the values with yours:
+### Step 1: Create your config.env
 
 ```bash
+# Copy the example file
+cp config.env.example config.env
+
+# Edit with your values
 nano config.env
 ```
+
+**Your config.env is private** - it's in .gitignore and won't be pushed to GitHub.
 
 **Required values:**
 | Variable | What to put |
