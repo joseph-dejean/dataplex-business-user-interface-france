@@ -72,6 +72,8 @@ APIS=(
     "firestore.googleapis.com"
     "iam.googleapis.com"
     "aiplatform.googleapis.com"
+    "cloudresourcemanager.googleapis.com"
+    "geminidataanalytics.googleapis.com"
 )
 
 for api in "${APIS[@]}"; do

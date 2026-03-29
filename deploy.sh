@@ -164,6 +164,9 @@ REQUIRED_APIS=(
   "datalineage.googleapis.com"
   "firestore.googleapis.com"
   "iam.googleapis.com"
+  "aiplatform.googleapis.com"
+  "cloudresourcemanager.googleapis.com"
+  "geminidataanalytics.googleapis.com"
 )
 
 for api in "${REQUIRED_APIS[@]}"; do
