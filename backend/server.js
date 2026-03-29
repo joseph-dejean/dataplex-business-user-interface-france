@@ -2748,8 +2748,36 @@ app.get('/api/v1/app-configs', async (req, res) => {
       let p = projectList[0] ? projectList[0].filter(pr => pr.projectId !== projectId) : [];
       projects = [currentProject[0], ...p];
       configData = defaultConfigData ? JSON.parse(defaultConfigData) : {};
+
+      // Add external projects from EXTERNAL_PROJECTS env var (they might not be in searchProjects)
+      const existingProjectIds = new Set(projects.map(pr => pr?.projectId).filter(Boolean));
+      EXTERNAL_PROJECTS.forEach(extProjId => {
+        if (!existingProjectIds.has(extProjId)) {
+          projects.push({
+            projectId: extProjId,
+            name: `projects/${extProjId}`,
+            displayName: extProjId
+          });
+          console.log(`[APP-CONFIGS] Added external project: ${extProjId}`);
+        }
+      });
     } catch (err) {
       console.error('[APP-CONFIGS] Error fetching configs:', err);
+      // Even if fetching fails, ensure we have the main project and external projects
+      if (projectId) {
+        projects.push({
+          projectId: projectId,
+          name: `projects/${projectId}`,
+          displayName: projectId
+        });
+      }
+      EXTERNAL_PROJECTS.forEach(extProjId => {
+        projects.push({
+          projectId: extProjId,
+          name: `projects/${extProjId}`,
+          displayName: extProjId
+        });
+      });
     }
 
     const reduceAspect = ({ name, fullyQualifiedName, entrySource, entryType }) => ({ name, fullyQualifiedName, entrySource, entryType });
@@ -2766,9 +2794,16 @@ app.get('/api/v1/app-configs', async (req, res) => {
       }
     }
 
+    // Filter out null/undefined projects and map to expected format
+    const validProjects = projects
+      .filter(p => p && p.projectId)
+      .map(({ projectId, name, displayName }) => ({ projectId, name, displayName }));
+
+    console.log(`[APP-CONFIGS] Returning ${validProjects.length} projects: ${validProjects.map(p => p.projectId).join(', ')}`);
+
     const configs = {
       aspects: aspects.map(({ dataplexEntry }) => ({ dataplexEntry: reduceAspect(dataplexEntry) })),
-      projects: projects.map(({ projectId, name, displayName }) => ({ projectId, name, displayName })),
+      projects: validProjects,
       defaultSearchProduct: configData.products || 'All',
       defaultSearchAssets: configData.assets || '',
       browseByAspectTypes: configData.aspectType || [],
@@ -3556,8 +3591,8 @@ Return ONLY a JSON array of indices like [2,0,5,1,3,4,...], no explanation.`;
       success: true,
       data: safeResults,
       results: safeResults,
-      nextPageToken: searchResponse?.nextPageToken || '',
-      totalSize: searchResponse?.totalSize || safeResults.length
+      nextPageToken: '', // Pagination not supported with multi-project search
+      totalSize: safeResults.length
     });
 
   } catch (error) {

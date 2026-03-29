@@ -188,6 +188,7 @@ const SearchEntriesCard: React.FC<SearchEntriesCardProps> = ({ entry, sx, isSele
   //const [parentName, setParentName] = useState<string>('');
   const [name, setName] = useState<string>('');
   const [datasetName, setDatasetName] = useState<string>('');
+  const [projectName, setProjectName] = useState<string>('');
   const [entryType, setEntryType] = useState<string>('');
   const [modifiedDate, setModifiedDate] = useState<string>('');
   const [systemName, setSystemName] = useState<string>('');
@@ -261,6 +262,23 @@ const SearchEntriesCard: React.FC<SearchEntriesCardProps> = ({ entry, sx, isSele
     }
 
     const resourcePath = entry.linkedResource || entry.relativeResourceName || entry.name || '';
+
+    // Extract project name from resource path
+    // Format: //bigquery.googleapis.com/projects/PROJECT_ID/datasets/...
+    // or: projects/PROJECT_ID/locations/...
+    if (resourcePath.includes('/projects/')) {
+      const parts = resourcePath.split('/projects/');
+      if (parts.length > 1) {
+        const parsedProjectName = parts[1].split('/')[0];
+        setProjectName(parsedProjectName || '');
+      } else {
+        setProjectName('');
+      }
+    } else {
+      setProjectName('');
+    }
+
+    // Extract dataset name
     if (resourcePath.includes('/datasets/')) {
       const parts = resourcePath.split('/datasets/');
       if (parts.length > 1) {
@@ -477,6 +495,22 @@ const SearchEntriesCard: React.FC<SearchEntriesCardProps> = ({ entry, sx, isSele
                     textTransform: 'capitalize',
                     flexShrink: 0 // Prevent tag from shrinking
                   }} />
+                  {projectName && (
+                    <Tag text={`Project: ${projectName}`} css={{
+                      fontFamily: '"Google Sans Text", sans-serif',
+                      color: '#1A73E8',
+                      backgroundColor: '#E8F0FE',
+                      border: '1px solid #D2E3FC',
+                      margin: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      padding: "0.25rem 0.5rem",
+                      fontWeight: 500,
+                      borderRadius: '8px',
+                      flexShrink: 0
+                    }} />
+                  )}
                   {datasetName && (
                     <Tag text={`Dataset: ${datasetName}`} css={{
                       fontFamily: '"Google Sans Text", sans-serif',

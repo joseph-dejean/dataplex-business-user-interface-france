@@ -236,11 +236,12 @@ log "Image built and pushed: ${IMAGE_URI}:${IMAGE_TAG}"
 header "6. Deploying to Cloud Run"
 
 # Build the env vars string
+# NOTE: VITE_* vars are embedded in frontend JS at build time
+# Do NOT put secrets in VITE_* vars - they are exposed to browsers!
 ENV_VARS="VITE_API_URL=/api"
 ENV_VARS+=",VITE_API_VERSION=v1"
 ENV_VARS+=",VITE_GOOGLE_PROJECT_ID=${GCP_PROJECT_ID}"
 ENV_VARS+=",VITE_GOOGLE_CLIENT_ID=${OAUTH_CLIENT_ID}"
-ENV_VARS+=",VITE_GOOGLE_CLIENT_SECRET=${OAUTH_CLIENT_SECRET}"
 ENV_VARS+=",VITE_GOOGLE_REDIRECT_URI=/auth/google/callback"
 ENV_VARS+=",VITE_ADMIN_EMAIL=${ADMIN_EMAIL}"
 ENV_VARS+=",GOOGLE_CLOUD_PROJECT_ID=${GCP_PROJECT_ID}"
@@ -249,6 +250,7 @@ ENV_VARS+=",GCP_PROJECT=${GCP_PROJECT_ID}"
 ENV_VARS+=",GCP_LOCATION=${GCP_LOCATION}"
 ENV_VARS+=",GCP_REGION=${GCP_REGION}"
 ENV_VARS+=",SUPER_ADMIN_EMAIL=${ADMIN_EMAIL}"
+ENV_VARS+=",GOOGLE_CLIENT_SECRET=${OAUTH_CLIENT_SECRET}"
 
 # Add external projects if configured
 if [[ -n "$EXTERNAL_PROJECTS" ]]; then
