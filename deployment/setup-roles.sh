@@ -2,7 +2,6 @@
 # ===========================================
 # DATAPLEX BUSINESS UI - IAM SETUP SCRIPT
 # ===========================================
-# Supports multiple external projects!
 
 set -e
 
@@ -29,13 +28,8 @@ else
 fi
 
 # Validate required variables
-if [ -z "$PROJECT_1" ] || [ "$PROJECT_1" == "your-main-project-id" ]; then
-    echo -e "${RED}ERROR: PROJECT_1 is not set in config.env${NC}"
-    exit 1
-fi
-
-if [ -z "$YOUR_EMAIL" ] || [ "$YOUR_EMAIL" == "your-email@example.com" ]; then
-    echo -e "${RED}ERROR: YOUR_EMAIL is not set in config.env${NC}"
+if [ -z "$GCP_PROJECT_ID" ] || [ "$GCP_PROJECT_ID" == "your-project-id" ]; then
+    echo -e "${RED}ERROR: GCP_PROJECT_ID is not set in config.env${NC}"
     exit 1
 fi
 
@@ -47,26 +41,26 @@ fi
 
 echo ""
 echo -e "${YELLOW}Configuration:${NC}"
-echo "  Main Project:       $PROJECT_1"
+echo "  Project ID:         $GCP_PROJECT_ID"
+echo "  Region:             $GCP_REGION"
 echo "  External Projects:  ${EXTERNAL_PROJECTS:-None}"
-echo "  Your Email:         $YOUR_EMAIL"
 echo "  Admin Email:        $ADMIN_EMAIL"
 echo ""
 
 # Set the project
-echo -e "${BLUE}[1/5] Setting active project to $PROJECT_1...${NC}"
-gcloud config set project $PROJECT_1
+echo -e "${BLUE}[1/4] Setting active project to $GCP_PROJECT_ID...${NC}"
+gcloud config set project $GCP_PROJECT_ID
 
 # Get project number
-echo -e "${BLUE}[2/5] Getting project info...${NC}"
-PROJECT_NUMBER=$(gcloud projects describe $PROJECT_1 --format="value(projectNumber)")
+echo -e "${BLUE}[2/4] Getting project info...${NC}"
+PROJECT_NUMBER=$(gcloud projects describe $GCP_PROJECT_ID --format="value(projectNumber)")
 SERVICE_ACCOUNT="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 echo "  Project Number:    $PROJECT_NUMBER"
 echo "  Service Account:   $SERVICE_ACCOUNT"
 
 # Enable APIs
 echo ""
-echo -e "${BLUE}[3/5] Enabling required APIs...${NC}"
+echo -e "${BLUE}[3/4] Enabling required APIs...${NC}"
 APIS=(
     "run.googleapis.com"
     "artifactregistry.googleapis.com"
@@ -85,30 +79,9 @@ for api in "${APIS[@]}"; do
     gcloud services enable $api --quiet 2>/dev/null || true
 done
 
-# Grant roles to user
-echo ""
-echo -e "${BLUE}[4/5] Granting deployment roles to $YOUR_EMAIL...${NC}"
-
-USER_ROLES=(
-    "roles/run.admin"
-    "roles/iam.serviceAccountUser"
-    "roles/artifactregistry.admin"
-    "roles/cloudbuild.builds.editor"
-    "roles/datastore.owner"
-    "roles/serviceusage.serviceUsageAdmin"
-)
-
-for role in "${USER_ROLES[@]}"; do
-    echo "  Granting $role..."
-    gcloud projects add-iam-policy-binding $PROJECT_1 \
-        --member="user:$YOUR_EMAIL" \
-        --role="$role" \
-        --quiet 2>/dev/null || true
-done
-
 # Grant roles to service account
 echo ""
-echo -e "${BLUE}[5/5] Granting runtime roles to service account...${NC}"
+echo -e "${BLUE}[4/4] Granting runtime roles to service account...${NC}"
 
 SA_ROLES=(
     "roles/dataplex.admin"
@@ -124,17 +97,17 @@ SA_ROLES=(
 
 for role in "${SA_ROLES[@]}"; do
     echo "  Granting $role..."
-    gcloud projects add-iam-policy-binding $PROJECT_1 \
+    gcloud projects add-iam-policy-binding $GCP_PROJECT_ID \
         --member="serviceAccount:$SERVICE_ACCOUNT" \
         --role="$role" \
         --quiet 2>/dev/null || true
 done
 
-# Generate deploy.env
+# Generate deploy.env for the main deploy script
 echo ""
 echo -e "${BLUE}Generating deploy.env...${NC}"
 cat > deploy.env << EOF
-GCP_PROJECT_ID=$PROJECT_1
+GCP_PROJECT_ID=$GCP_PROJECT_ID
 GCP_REGION=${GCP_REGION:-europe-west1}
 GCP_LOCATION=${GCP_LOCATION:-europe-west1}
 SERVICE_NAME=${SERVICE_NAME:-dataplex-business-ui}
@@ -146,66 +119,63 @@ ADMIN_EMAIL=$ADMIN_EMAIL
 EOF
 
 # Handle external projects
-if [ -n "$EXTERNAL_PROJECTS" ] && [ "$EXTERNAL_PROJECTS" != "external-project-1 external-project-2" ]; then
+if [ -n "$EXTERNAL_PROJECTS" ]; then
     echo ""
     echo -e "${YELLOW}=========================================${NC}"
     echo -e "${YELLOW}  EXTERNAL PROJECTS SETUP${NC}"
     echo -e "${YELLOW}=========================================${NC}"
     echo ""
-    echo "Your app's service account needs access to these external projects."
-    echo ""
-    echo -e "${GREEN}Service Account to share:${NC}"
+    echo -e "${GREEN}Service Account to share with external project admins:${NC}"
     echo "  $SERVICE_ACCOUNT"
     echo ""
 
     # Generate commands file for admins
-    cat > external-projects-commands.sh << 'HEADER'
+    cat > external-projects-commands.sh << HEADER
 #!/bin/bash
 # ===========================================
 # COMMANDS FOR EXTERNAL PROJECT ADMINS
 # ===========================================
 # Run these commands on each external project
 
+SERVICE_ACCOUNT="$SERVICE_ACCOUNT"
+
 HEADER
 
-    echo "SERVICE_ACCOUNT=\"$SERVICE_ACCOUNT\"" >> external-projects-commands.sh
-    echo "" >> external-projects-commands.sh
-
     for ext_project in $EXTERNAL_PROJECTS; do
-        echo "# --- Commands for project: $ext_project ---" >> external-projects-commands.sh
-        echo "PROJECT=\"$ext_project\"" >> external-projects-commands.sh
-        cat >> external-projects-commands.sh << 'COMMANDS'
+        cat >> external-projects-commands.sh << COMMANDS
+# --- Project: $ext_project ---
+echo "Granting access on $ext_project..."
+gcloud projects add-iam-policy-binding $ext_project \\
+    --member="serviceAccount:\$SERVICE_ACCOUNT" \\
+    --role="roles/bigquery.dataViewer" --quiet
 
-gcloud projects add-iam-policy-binding $PROJECT \
-    --member="serviceAccount:$SERVICE_ACCOUNT" \
-    --role="roles/bigquery.dataViewer"
+gcloud projects add-iam-policy-binding $ext_project \\
+    --member="serviceAccount:\$SERVICE_ACCOUNT" \\
+    --role="roles/bigquery.metadataViewer" --quiet
 
-gcloud projects add-iam-policy-binding $PROJECT \
-    --member="serviceAccount:$SERVICE_ACCOUNT" \
-    --role="roles/bigquery.metadataViewer"
+gcloud projects add-iam-policy-binding $ext_project \\
+    --member="serviceAccount:\$SERVICE_ACCOUNT" \\
+    --role="roles/datacatalog.viewer" --quiet
 
-gcloud projects add-iam-policy-binding $PROJECT \
-    --member="serviceAccount:$SERVICE_ACCOUNT" \
-    --role="roles/datacatalog.viewer"
-
-gcloud projects add-iam-policy-binding $PROJECT \
-    --member="serviceAccount:$SERVICE_ACCOUNT" \
-    --role="roles/datalineage.viewer"
-
-echo "Done for $PROJECT"
+gcloud projects add-iam-policy-binding $ext_project \\
+    --member="serviceAccount:\$SERVICE_ACCOUNT" \\
+    --role="roles/datalineage.viewer" --quiet
 
 COMMANDS
-        echo "" >> external-projects-commands.sh
     done
+
+    echo "echo 'Done!'" >> external-projects-commands.sh
+    chmod +x external-projects-commands.sh
 
     echo -e "${YELLOW}Commands saved to: external-projects-commands.sh${NC}"
     echo ""
-    echo "Options:"
-    echo "  1. If YOU have admin access on external projects, run:"
-    echo "     ./external-projects-commands.sh"
-    echo ""
-    echo "  2. If you DON'T have admin access, send the file to each project admin"
-    echo ""
+    read -p "Do you have admin access on external projects? Run commands now? (y/N): " confirm
+    if [ "$confirm" == "y" ] || [ "$confirm" == "Y" ]; then
+        ./external-projects-commands.sh
+    else
+        echo ""
+        echo "Send external-projects-commands.sh to each project admin."
+    fi
 fi
 
 echo ""

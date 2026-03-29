@@ -6,7 +6,6 @@
 #
 # Prerequisites:
 #   - gcloud CLI installed and authenticated (gcloud auth login)
-#   - Docker installed (or use --cloud-build flag to build remotely)
 #   - A GCP project with the following APIs enabled:
 #       * Cloud Run, Artifact Registry, Cloud Build
 #       * Dataplex, BigQuery, Data Catalog, Data Lineage
@@ -16,7 +15,7 @@
 # Usage:
 #   ./deploy.sh                     # Interactive — prompts for all values
 #   ./deploy.sh --config deploy.env # Use a config file
-#   ./deploy.sh --cloud-build       # Build remotely via Cloud Build
+#   ./deploy.sh --local-build       # Build locally with Docker (default: Cloud Build)
 #
 # =============================================================================
 
@@ -36,19 +35,20 @@ info()  { echo -e "${BLUE}[i]${NC} $1"; }
 header(){ echo -e "\n${BLUE}═══════════════════════════════════════════${NC}"; echo -e "${BLUE}  $1${NC}"; echo -e "${BLUE}═══════════════════════════════════════════${NC}\n"; }
 
 # ---------- Parse flags ----------
-USE_CLOUD_BUILD=false
+USE_CLOUD_BUILD=true  # Default to Cloud Build (more reliable in Cloud Shell)
 CONFIG_FILE=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --cloud-build) USE_CLOUD_BUILD=true; shift ;;
+    --local-build) USE_CLOUD_BUILD=false; shift ;;
+    --cloud-build) USE_CLOUD_BUILD=true; shift ;;  # kept for backwards compatibility
     --config)      CONFIG_FILE="$2"; shift 2 ;;
     --help|-h)
       echo "Usage: ./deploy.sh [OPTIONS]"
       echo ""
       echo "Options:"
       echo "  --config FILE    Load configuration from file (see deploy.env.example)"
-      echo "  --cloud-build    Build image remotely using Cloud Build instead of local Docker"
+      echo "  --local-build    Build image locally with Docker (default: Cloud Build)"
       echo "  -h, --help       Show this help message"
       exit 0
       ;;
