@@ -4560,10 +4560,10 @@ app.post('/api/v1/access-request/update', async (req, res) => {
     let effectiveStatus = status;
     let currentApprovals = originalRequest.approvals || [];
 
-    // Calculate dynamic threshold based on number of project admins (stewards)
-    // Rule: 1 steward = 1 approval needed, 2+ stewards = 2 approvals needed, No stewards = 2 (fallback) 
+    // Calculate dynamic threshold based on number of data stewards
+    // Rule: 0 or 1 steward = 1 approval needed, 2+ stewards = 2 approvals needed
     const stewardList = originalRequest.projectAdmin || [];
-    const threshold = Math.max(1, Math.min(stewardList.length || 2, 2));
+    const threshold = stewardList.length >= 2 ? 2 : 1;
 
     if (status === 'APPROVED') {
       // Prevent double-approvals from same user
