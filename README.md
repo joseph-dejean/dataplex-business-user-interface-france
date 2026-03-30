@@ -330,19 +330,18 @@ If your BigQuery data is in different GCP projects than where you deploy the app
 | `roles/bigquery.jobUser` | Run queries |
 | `roles/datacatalog.viewer` | View Data Catalog entries |
 | `roles/datalineage.viewer` | View Data Lineage |
+| `roles/geminidataanalytics.dataAgentCreator` | CA API - create data agents |
+| `roles/geminidataanalytics.dataAgentUser` | CA API - use data agents |
 
-### User-Based Permissions (No Service Account Roles Needed)
+### User-Based Permissions
 
-The following features use the **logged-in user's OAuth token** instead of the service account. This means:
-- Users can only access data they have permission for (better security)
-- No service account roles needed on external projects for these features
+Access granting uses the **admin user's OAuth token** instead of the service account:
 
 | Feature | User Roles Needed |
 |---------|-------------------|
-| **AI Chat (CA API)** | `bigquery.dataViewer`, `bigquery.jobUser` on the dataset |
 | **Grant/Revoke Access** | `bigquery.dataOwner` on the dataset (admin users only) |
 
-> **Note:** Both projects must be in the **same GCP Organization** for cross-project queries. You can create a free organization using [Cloud Identity Free](https://cloud.google.com/identity/signup/free).
+> **Note:** For CA API (AI Chat) to work across projects, both projects must be in the **same GCP Organization**. You can create a free organization using [Cloud Identity Free](https://cloud.google.com/identity/signup/free).
 
 ### Setup Commands
 
@@ -372,6 +371,14 @@ gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
 gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
     --member="serviceAccount:$SERVICE_ACCOUNT" \
     --role="roles/datalineage.viewer"
+
+gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
+    --member="serviceAccount:$SERVICE_ACCOUNT" \
+    --role="roles/geminidataanalytics.dataAgentCreator"
+
+gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
+    --member="serviceAccount:$SERVICE_ACCOUNT" \
+    --role="roles/geminidataanalytics.dataAgentUser"
 ```
 
 > **Tip:** The `deployment/setup-roles.sh` script automatically generates these commands for you.

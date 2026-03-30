@@ -95,10 +95,11 @@ SA_ROLES=(
     "roles/datastore.user"
     "roles/datalineage.viewer"
     "roles/aiplatform.user"
+    "roles/geminidataanalytics.dataAgentCreator"
+    "roles/geminidataanalytics.dataAgentUser"
     "roles/storage.objectAdmin"
 )
-# NOTE: CA API and access granting use the logged-in user's OAuth token,
-# so geminidataanalytics and bigquery.dataOwner roles are not needed for SA.
+# NOTE: Access granting uses the admin's OAuth token (admin needs bigquery.dataOwner on dataset)
 
 for role in "${SA_ROLES[@]}"; do
     echo "  Granting $role..."
@@ -208,10 +209,16 @@ gcloud projects add-iam-policy-binding $ext_project \\
     --member="serviceAccount:\$SERVICE_ACCOUNT" \\
     --role="roles/datalineage.viewer" --quiet
 
-# NOTE: CA API and access granting use the logged-in user's OAuth token,
-# so no service account roles are needed for those features.
-# Users need their own permissions (bigquery.dataViewer, bigquery.jobUser for chat;
-# bigquery.dataOwner for granting access).
+# CA API - create/use data agents
+gcloud projects add-iam-policy-binding $ext_project \\
+    --member="serviceAccount:\$SERVICE_ACCOUNT" \\
+    --role="roles/geminidataanalytics.dataAgentCreator" --quiet
+
+gcloud projects add-iam-policy-binding $ext_project \\
+    --member="serviceAccount:\$SERVICE_ACCOUNT" \\
+    --role="roles/geminidataanalytics.dataAgentUser" --quiet
+
+# NOTE: Access granting uses admin's OAuth token (admin needs bigquery.dataOwner on dataset)
 
 COMMANDS
     done
