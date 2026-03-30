@@ -225,6 +225,16 @@ gcloud projects add-iam-policy-binding $ext_project \\
     --member="serviceAccount:\$SERVICE_ACCOUNT" \\
     --role="roles/geminidataanalytics.dataAgentUser" --quiet
 
+# Gemini for Google Cloud
+gcloud projects add-iam-policy-binding $ext_project \\
+    --member="serviceAccount:\$SERVICE_ACCOUNT" \\
+    --role="roles/cloudaicompanion.user" --quiet
+
+# Vertex AI access
+gcloud projects add-iam-policy-binding $ext_project \\
+    --member="serviceAccount:\$SERVICE_ACCOUNT" \\
+    --role="roles/aiplatform.user" --quiet
+
 COMMANDS
     done
 
