@@ -91,12 +91,14 @@ SA_ROLES=(
     "roles/bigquery.dataViewer"
     "roles/bigquery.metadataViewer"
     "roles/bigquery.jobUser"
+    "roles/bigquery.dataOwner"
     "roles/datacatalog.viewer"
     "roles/datastore.user"
     "roles/datalineage.viewer"
     "roles/aiplatform.user"
     "roles/resourcemanager.projectIamAdmin"
     "roles/geminidataanalytics.dataAgentCreator"
+    "roles/geminidataanalytics.dataAgentUser"
     "roles/cloudaicompanion.user"
 )
 
@@ -181,6 +183,15 @@ gcloud projects add-iam-policy-binding $ext_project \\
 gcloud projects add-iam-policy-binding $ext_project \\
     --member="serviceAccount:\$SERVICE_ACCOUNT" \\
     --role="roles/datalineage.viewer" --quiet
+
+# CA API - create/use data agents for cross-project tables
+gcloud projects add-iam-policy-binding $ext_project \\
+    --member="serviceAccount:\$SERVICE_ACCOUNT" \\
+    --role="roles/geminidataanalytics.dataAgentCreator" --quiet
+
+gcloud projects add-iam-policy-binding $ext_project \\
+    --member="serviceAccount:\$SERVICE_ACCOUNT" \\
+    --role="roles/geminidataanalytics.dataAgentUser" --quiet
 
 COMMANDS
     done

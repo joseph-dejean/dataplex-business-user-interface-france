@@ -327,10 +327,12 @@ If your BigQuery data is in different GCP projects than where you deploy the app
 |------|---------|
 | `roles/bigquery.dataViewer` | Read table data |
 | `roles/bigquery.metadataViewer` | View table/column metadata |
-| `roles/bigquery.jobUser` | Run queries (required for Conversational Analytics) |
-| `roles/bigquery.dataOwner` | Grant dataset access to users (required for access approval) |
+| `roles/bigquery.jobUser` | Run queries |
+| `roles/bigquery.dataOwner` | Grant dataset access to users |
 | `roles/datacatalog.viewer` | View Data Catalog entries |
 | `roles/datalineage.viewer` | View Data Lineage |
+| `roles/geminidataanalytics.dataAgentCreator` | CA API - create data agents |
+| `roles/geminidataanalytics.dataAgentUser` | CA API - use data agents |
 
 ### Setup Commands
 
@@ -364,6 +366,14 @@ gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
 gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
     --member="serviceAccount:$SERVICE_ACCOUNT" \
     --role="roles/datalineage.viewer"
+
+gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
+    --member="serviceAccount:$SERVICE_ACCOUNT" \
+    --role="roles/geminidataanalytics.dataAgentCreator"
+
+gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
+    --member="serviceAccount:$SERVICE_ACCOUNT" \
+    --role="roles/geminidataanalytics.dataAgentUser"
 ```
 
 > **Tip:** The `deployment/setup-roles.sh` script automatically generates these commands for you.
