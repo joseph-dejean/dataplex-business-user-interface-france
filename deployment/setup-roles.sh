@@ -119,6 +119,7 @@ CLOUDBUILD_SA="${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com"
 CLOUDBUILD_ROLES=(
     "roles/storage.objectViewer"
     "roles/logging.logWriter"
+    "roles/artifactregistry.writer"
 )
 
 for role in "${CLOUDBUILD_ROLES[@]}"; do
@@ -128,6 +129,18 @@ for role in "${CLOUDBUILD_ROLES[@]}"; do
         --role="$role" \
         --quiet 2>/dev/null || true
 done
+
+# Grant current user Artifact Registry access (for local docker push)
+echo ""
+echo -e "${BLUE}Granting current user Artifact Registry access...${NC}"
+CURRENT_USER=$(gcloud config get-value account 2>/dev/null)
+if [ -n "$CURRENT_USER" ]; then
+    echo "  Granting roles/artifactregistry.writer to $CURRENT_USER..."
+    gcloud projects add-iam-policy-binding $GCP_PROJECT_ID \
+        --member="user:$CURRENT_USER" \
+        --role="roles/artifactregistry.writer" \
+        --quiet 2>/dev/null || true
+fi
 
 # Generate deploy.env for the main deploy script
 echo ""
