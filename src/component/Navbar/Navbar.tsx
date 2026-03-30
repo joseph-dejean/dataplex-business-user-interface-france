@@ -12,7 +12,7 @@ import Avatar from '@mui/material/Avatar';
 import Tooltip from '@mui/material/Tooltip';
 import MenuItem from '@mui/material/MenuItem';
 import './Navbar.css'
-import { HelpOutline, MenuBook, Home, Logout, Menu as MenuIcon, Security, Business } from '@mui/icons-material';
+import { HelpOutline, MenuBook, Home, Logout, Menu as MenuIcon, Security } from '@mui/icons-material';
 import SearchBar from '../SearchBar/SearchBar';
 import { useDispatch, useSelector } from 'react-redux';
 import type { AppDispatch } from '../../app/store';
@@ -55,19 +55,13 @@ import NotificationCenter from './NotificationCenter';
  */
 
 //const pages = ['Guide', 'Notification', 'Help'];
-const settings = ['Home', 'Integrations'];
+const settings = ['Home'];
 
 // Icon mapping for menu items
 const getMenuIcon = (setting: string) => {
   switch (setting) {
     case 'Home':
       return <Home sx={{
-        mr: "0.25rem",
-        fontSize: "1.25rem", // 20px
-        color: "#5F6367"
-      }} />;
-    case 'Integrations':
-      return <Business sx={{
         mr: "0.25rem",
         fontSize: "1.25rem", // 20px
         color: "#5F6367"
@@ -81,8 +75,6 @@ const getNavPath = (setting: string) => {
   switch (setting) {
     case 'Home':
       return '/home';
-    case 'Integrations':
-      return '/settings';
     default:
       return '/';
   }
