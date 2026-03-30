@@ -87,7 +87,7 @@ echo ""
 echo -e "${BLUE}[4/4] Granting runtime roles to service account...${NC}"
 
 SA_ROLES=(
-    "roles/dataplex.admin"
+    "roles/dataplex.viewer"
     "roles/bigquery.dataViewer"
     "roles/bigquery.metadataViewer"
     "roles/bigquery.jobUser"
