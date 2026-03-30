@@ -12,7 +12,7 @@
 
 ```bash
 git clone https://github.com/joseph-dejean/dataplex-business-user-interface.git
-cd tst1/deployment
+cd dataplex-business-user-interface/deployment
 ```
 
 ---
