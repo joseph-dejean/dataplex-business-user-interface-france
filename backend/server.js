@@ -385,14 +385,11 @@ app.post('/api/v1/chat', async (req, res) => {
 
     const systemInstruction = 'You are a helpful Data Steward assistant for Dataplex. Answer questions about the data tables based on their schema and metadata. Be concise and accurate.';
 
-    // Use ADC (service account) token for CA API - the user's OAuth token lacks the cloud-platform scope
-    // needed by geminidataanalytics.googleapis.com. The service account has the proper IAM roles.
-    console.log('[CA_DEBUG] Step 3: Getting ADC token for CA API...');
-    const adcAuth = new AdcGoogleAuth();
-    const adcClient = await adcAuth.getClient();
-    const adcToken = (await adcClient.getAccessToken()).token;
-    const adcEmail = adcClient.email || 'unknown';
-    console.log(`Using ADC service account token for CA API call (SA: ${adcEmail}, location: ${location})`);
+    // Use the USER's OAuth token for CA API - this allows cross-project queries
+    // if the user has permissions on the target project (no service account roles needed)
+    console.log('[CA_DEBUG] Step 3: Using user OAuth token for CA API...');
+    const caToken = userAccessToken;
+    console.log(`Using user's OAuth token for CA API call (location: ${location})`);
 
     let chatPayload;
     const existingConversationId = context.conversationId; // From frontend state
@@ -404,7 +401,7 @@ app.post('/api/v1/chat', async (req, res) => {
       dataAgentName = await getOrCreateDataAgent(tableReferences, systemInstruction, {
         projectId: caProjectId,
         location: location,
-        accessToken: adcToken
+        accessToken: caToken
       });
       if (dataAgentName) {
         console.log(`[DataAgent] Using persistent agent: ${dataAgentName}`);
@@ -468,7 +465,7 @@ app.post('/api/v1/chat', async (req, res) => {
       }
     }
 
-    // Make request to Conversational Analytics API using ADC service account token
+    // Make request to Conversational Analytics API using user's OAuth token
     console.log('[CA_DEBUG] Step 4: Calling CA API at:', chatUrl);
     console.log('[CA_DEBUG] Payload parent:', chatPayload.parent);
     console.log('[CA_DEBUG] Has inlineContext:', !!chatPayload.inlineContext);
@@ -477,7 +474,7 @@ app.post('/api/v1/chat', async (req, res) => {
     console.log('[CA_DEBUG] Table refs count:', tableReferences.length);
     const chatResponse = await axios.post(chatUrl, chatPayload, {
       headers: {
-        'Authorization': `Bearer ${adcToken}`,
+        'Authorization': `Bearer ${caToken}`,
         'Content-Type': 'application/json',
         'x-server-timeout': '300'
       },
