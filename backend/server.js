@@ -3292,7 +3292,7 @@ app.post('/api/v1/search', async (req, res) => {
     if (semanticSearch && query && query.trim().length >= 2) {
       try {
         const vertex_ai = new VertexAI({
-          project: projectId,
+          project: PROJECT_ID,
           location: process.env.GCP_LOCATION || 'europe-west1'
         });
         const generativeModel = vertex_ai.getGenerativeModel({ model: 'gemini-2.5-flash' });

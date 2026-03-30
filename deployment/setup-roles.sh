@@ -74,6 +74,7 @@ APIS=(
     "aiplatform.googleapis.com"
     "cloudresourcemanager.googleapis.com"
     "geminidataanalytics.googleapis.com"
+    "cloudaicompanion.googleapis.com"
 )
 
 for api in "${APIS[@]}"; do
@@ -95,6 +96,8 @@ SA_ROLES=(
     "roles/datalineage.viewer"
     "roles/aiplatform.user"
     "roles/resourcemanager.projectIamAdmin"
+    "roles/geminidataanalytics.dataAgentCreator"
+    "roles/cloudaicompanion.user"
 )
 
 for role in "${SA_ROLES[@]}"; do

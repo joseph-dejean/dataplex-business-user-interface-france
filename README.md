@@ -64,10 +64,11 @@ cp .env.example .env
 ```
 
 Edit `.env` with your values:
-- `VITE_GOOGLE_CLIENT_ID` and `VITE_GOOGLE_CLIENT_SECRET` from your OAuth credentials
+- `VITE_GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` from your OAuth credentials
 - `VITE_GOOGLE_PROJECT_ID` / `GOOGLE_CLOUD_PROJECT_ID` — your GCP project
 - `GCP_LOCATION` — the region where your Dataplex resources are (e.g., `europe-west1`)
 - `SUPER_ADMIN_EMAIL` — the email of the initial admin user
+- `EXTERNAL_PROJECTS` — (optional) space-separated list of additional GCP projects to search
 
 ### 3. Authenticate to GCP
 
@@ -188,7 +189,7 @@ gcloud run deploy dataplex-ui \
   --region us-central1 \
   --allow-unauthenticated \
   --port 8080 \
-  --set-env-vars "VITE_API_URL=/api,VITE_API_VERSION=v1,VITE_ADMIN_EMAIL=admin@example.com,VITE_GOOGLE_PROJECT_ID=PROJECT_ID,VITE_GOOGLE_CLIENT_ID=YOUR_CLIENT_ID,VITE_GOOGLE_REDIRECT_URI=/auth/google/callback,GOOGLE_CLOUD_PROJECT_ID=PROJECT_ID,GCP_LOCATION=europe-west1,GCP_REGION=europe-west1,VITE_GOOGLE_CLIENT_SECRET=YOUR_SECRET,SUPER_ADMIN_EMAIL=admin@example.com"
+  --set-env-vars "VITE_API_URL=/api,VITE_API_VERSION=v1,VITE_ADMIN_EMAIL=admin@example.com,VITE_GOOGLE_PROJECT_ID=PROJECT_ID,VITE_GOOGLE_CLIENT_ID=YOUR_CLIENT_ID,VITE_GOOGLE_REDIRECT_URI=/auth/google/callback,GOOGLE_CLOUD_PROJECT_ID=PROJECT_ID,GCP_LOCATION=europe-west1,GCP_REGION=europe-west1,GOOGLE_CLIENT_SECRET=YOUR_SECRET,SUPER_ADMIN_EMAIL=admin@example.com"
 ```
 
 4. **Update OAuth redirect URIs** with the Cloud Run URL (e.g., `https://dataplex-ui-xxxxx.run.app`)
@@ -199,7 +200,7 @@ The repo includes `.github/workflows/deploy.yml`. Configure these GitHub secrets
 - `GCP_PROJECT_ID`
 - `GCP_WORKLOAD_IDENTITY_PROVIDER`
 - `GCP_SERVICE_ACCOUNT`
-- `VITE_GOOGLE_CLIENT_SECRET`
+- `GOOGLE_CLIENT_SECRET`
 
 ## Admin Setup
 
@@ -289,13 +290,14 @@ dataplex-business-user-interface/
 | `VITE_GOOGLE_PROJECT_ID` | Yes | GCP project ID |
 | `GOOGLE_CLOUD_PROJECT_ID` | Yes | GCP project ID (backend) |
 | `VITE_GOOGLE_CLIENT_ID` | Yes | OAuth 2.0 Client ID |
-| `VITE_GOOGLE_CLIENT_SECRET` | Yes | OAuth 2.0 Client Secret |
+| `GOOGLE_CLIENT_SECRET` | Yes | OAuth 2.0 Client Secret (backend only) |
 | `VITE_GOOGLE_REDIRECT_URI` | Yes | OAuth redirect URI (usually `/auth/google/callback`) |
 | `VITE_API_URL` | Yes | API base URL (usually `/api`) |
 | `VITE_API_VERSION` | Yes | API version (usually `v1`) |
 | `GCP_LOCATION` | Yes | Dataplex resource region (e.g., `europe-west1`) |
 | `GCP_REGION` | Yes | Same as GCP_LOCATION |
 | `SUPER_ADMIN_EMAIL` | Yes | Initial super-admin email |
+| `EXTERNAL_PROJECTS` | No | Space-separated list of additional GCP projects to search |
 | `SMTP_EMAIL` | No | Gmail address for email notifications |
 | `SMTP_PASSWORD` | No | Gmail App Password for SMTP |
 | `SERVICENOW_INSTANCE_URL` | No | ServiceNow instance for ticket integration |
@@ -308,7 +310,8 @@ dataplex-business-user-interface/
 |-----|---------|
 | Dataplex API | Catalog search, entry details, aspects, data products, data scans |
 | BigQuery API | Table schemas, sample data, dataset access checks |
-| Conversational Analytics API | AI chat with data tables |
+| Conversational Analytics API | AI chat with data tables (geminidataanalytics.googleapis.com) |
+| Cloud AI Companion API | AI assistant features (cloudaicompanion.googleapis.com) |
 | Vertex AI API | Gemini for AI search and chart generation |
 | Data Lineage API | Upstream/downstream data flow visualization |
 | Cloud Resource Manager API | Project listing, IAM policy management |

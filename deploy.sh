@@ -129,6 +129,7 @@ header "3. Application Settings"
 
 prompt_var "ADMIN_EMAIL"  "Super Admin Email"    ""
 prompt_var "GCP_LOCATION" "Dataplex Location"    "$GCP_REGION"
+prompt_var "EXTERNAL_PROJECTS" "External Projects (space-separated, optional)" ""
 
 # Derive values
 IMAGE_TAG=$(git rev-parse --short HEAD 2>/dev/null || echo "latest")
@@ -167,6 +168,7 @@ REQUIRED_APIS=(
   "aiplatform.googleapis.com"
   "cloudresourcemanager.googleapis.com"
   "geminidataanalytics.googleapis.com"
+  "cloudaicompanion.googleapis.com"
 )
 
 for api in "${REQUIRED_APIS[@]}"; do
