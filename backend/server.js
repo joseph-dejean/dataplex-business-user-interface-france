@@ -418,11 +418,11 @@ app.post('/api/v1/chat', async (req, res) => {
       // Build the full conversation path, handling both raw IDs and full paths
       const conversationPath = existingConversationId.startsWith('projects/')
         ? existingConversationId
-        : `projects/${projectId_env}/locations/${location}/conversations/${existingConversationId}`;
+        : `projects/${caProjectId}/locations/${location}/conversations/${existingConversationId}`;
       console.log(`[Stateful] Resuming conversation: ${conversationPath}`);
       if (dataAgentName) {
         chatPayload = {
-          parent: `projects/${projectId_env}/locations/${location}`,
+          parent: `projects/${caProjectId}/locations/${location}`,
           messages: messages,
           conversationReference: {
             conversation: conversationPath,
@@ -433,7 +433,7 @@ app.post('/api/v1/chat', async (req, res) => {
         };
       } else {
         chatPayload = {
-          parent: `projects/${projectId_env}/locations/${location}`,
+          parent: `projects/${caProjectId}/locations/${location}`,
           messages: messages,
           conversationReference: {
             conversation: conversationPath,
@@ -449,7 +449,7 @@ app.post('/api/v1/chat', async (req, res) => {
       if (dataAgentName) {
         console.log('[Stateful] Starting new conversation with persistent Data Agent');
         chatPayload = {
-          parent: `projects/${projectId_env}/locations/${location}`,
+          parent: `projects/${caProjectId}/locations/${location}`,
           messages: messages,
           dataAgentContext: {
             dataAgent: dataAgentName
@@ -458,7 +458,7 @@ app.post('/api/v1/chat', async (req, res) => {
       } else {
         console.log('[Stateful] Starting new conversation with inline context (no agent available)');
         chatPayload = {
-          parent: `projects/${projectId_env}/locations/${location}`,
+          parent: `projects/${caProjectId}/locations/${location}`,
           messages: messages,
           inlineContext: {
             datasourceReferences: bigqueryDataSource,
