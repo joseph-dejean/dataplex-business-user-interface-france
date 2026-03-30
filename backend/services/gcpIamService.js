@@ -1,8 +1,102 @@
 const { google } = require('googleapis');
 const { GoogleAuth } = require('google-auth-library');
+const { BigQuery } = require('@google-cloud/bigquery');
+
+/**
+ * Grant access to a user on a specific BigQuery dataset.
+ * This is more granular than project-level IAM - users only get access to the specific dataset.
+ *
+ * @param {string} projectId - The GCP Project ID where the dataset lives.
+ * @param {string} datasetId - The BigQuery dataset ID.
+ * @param {string} email - The email of the user to grant access to.
+ * @param {string} role - The BigQuery role (READER, WRITER, or OWNER). Defaults to READER.
+ */
+const grantDatasetAccess = async (projectId, datasetId, email, role = 'READER') => {
+    console.log(`[DATASET-ACCESS] Granting ${role} access: User=${email}, Dataset=${projectId}.${datasetId}`);
+
+    try {
+        const bigquery = new BigQuery({ projectId });
+        const dataset = bigquery.dataset(datasetId);
+
+        // Get current dataset metadata
+        const [metadata] = await dataset.getMetadata();
+        const access = metadata.access || [];
+
+        // Check if user already has access
+        const member = `user:${email}`;
+        const existingEntry = access.find(entry =>
+            entry.userByEmail === email && entry.role === role
+        );
+
+        if (existingEntry) {
+            console.log(`[DATASET-ACCESS] User ${email} already has ${role} access to ${datasetId}`);
+            return true;
+        }
+
+        // Add new access entry
+        access.push({
+            role: role,
+            userByEmail: email
+        });
+
+        // Update dataset with new access list
+        metadata.access = access;
+        await dataset.setMetadata(metadata);
+
+        console.log(`[DATASET-ACCESS] Successfully granted ${role} access to ${email} on ${projectId}.${datasetId}`);
+        return true;
+
+    } catch (error) {
+        console.error('[DATASET-ACCESS] Error granting dataset access:', error);
+        throw new Error(`Failed to grant dataset access: ${error.message}`);
+    }
+};
+
+/**
+ * Revoke access from a user on a specific BigQuery dataset.
+ *
+ * @param {string} projectId - The GCP Project ID where the dataset lives.
+ * @param {string} datasetId - The BigQuery dataset ID.
+ * @param {string} email - The email of the user to revoke access from.
+ * @param {string} role - The BigQuery role to revoke (READER, WRITER, or OWNER).
+ */
+const revokeDatasetAccess = async (projectId, datasetId, email, role = 'READER') => {
+    console.log(`[DATASET-ACCESS] Revoking ${role} access: User=${email}, Dataset=${projectId}.${datasetId}`);
+
+    try {
+        const bigquery = new BigQuery({ projectId });
+        const dataset = bigquery.dataset(datasetId);
+
+        // Get current dataset metadata
+        const [metadata] = await dataset.getMetadata();
+        const access = metadata.access || [];
+
+        // Find and remove the user's access entry
+        const newAccess = access.filter(entry =>
+            !(entry.userByEmail === email && entry.role === role)
+        );
+
+        if (newAccess.length === access.length) {
+            console.log(`[DATASET-ACCESS] User ${email} doesn't have ${role} access to ${datasetId}`);
+            return true;
+        }
+
+        // Update dataset with new access list
+        metadata.access = newAccess;
+        await dataset.setMetadata(metadata);
+
+        console.log(`[DATASET-ACCESS] Successfully revoked ${role} access from ${email} on ${projectId}.${datasetId}`);
+        return true;
+
+    } catch (error) {
+        console.error('[DATASET-ACCESS] Error revoking dataset access:', error);
+        throw new Error(`Failed to revoke dataset access: ${error.message}`);
+    }
+};
 
 /**
  * Grant an IAM role to a user on a specific project.
+ * NOTE: This grants project-level access. For more granular access, use grantDatasetAccess.
  * 
  * @param {string} projectId - The GCP Project ID.
  * @param {string} email - The email of the user or service account.
@@ -253,6 +347,10 @@ const listProjectMembers = async (projectId) => {
 };
 
 module.exports = {
+    // Dataset-level access (recommended - more granular)
+    grantDatasetAccess,
+    revokeDatasetAccess,
+    // Project-level IAM (grants access to all datasets in project)
     grantIamAccess,
     revokeIamAccess,
     getIamBindings,

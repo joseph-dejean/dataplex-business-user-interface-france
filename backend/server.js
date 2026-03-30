@@ -20,7 +20,7 @@ const authMiddleware = require('./middlewares/authMiddleware');
 const { querySampleFromBigQuery } = require('./utility');
 const { sendAccessRequestEmail, sendApprovalEmail, sendRejectionEmail, sendFeedbackEmail } = require('./services/emailService');
 const { createAccessRequest, getAccessRequests, updateAccessRequestStatus, getAccessRequestById } = require('./services/accessRequestService');
-const { grantIamAccess, revokeIamAccess, getIamBindings, verifyUserAccess } = require('./services/gcpIamService');
+const { grantDatasetAccess, revokeDatasetAccess, grantIamAccess, revokeIamAccess, getIamBindings, verifyUserAccess } = require('./services/gcpIamService');
 const adminService = require('./services/adminService');
 const grantedAccessService = require('./services/grantedAccessService');
 const notificationService = require('./services/notificationService');
@@ -5226,9 +5226,34 @@ app.post('/api/v1/access/bulk-approve', async (req, res) => {
           continue;
         }
 
-        // Grant IAM access
-        const role = fullRequest.requestedRole || 'roles/bigquery.dataViewer';
-        await grantIamAccess(fullRequest.gcpProjectId, fullRequest.requesterEmail, role);
+        // Parse datasetId from assetName
+        // Formats: "bigquery:project.dataset.table", "project.dataset.table", etc.
+        let datasetId = null;
+        const assetName = fullRequest.assetName || '';
+        const cleanName = assetName.replace(/^bigquery:/, '');
+        const parts = cleanName.split('.');
+        if (parts.length >= 2) {
+          datasetId = parts[1]; // project.dataset.table -> dataset
+        }
+
+        // Grant dataset-level access (more granular than project IAM)
+        const requestedRole = fullRequest.requestedRole || 'roles/bigquery.dataViewer';
+        // Map IAM role to BigQuery dataset role
+        let datasetRole = 'READER';
+        if (requestedRole.includes('dataEditor') || requestedRole.includes('WRITER')) {
+          datasetRole = 'WRITER';
+        } else if (requestedRole.includes('dataOwner') || requestedRole.includes('OWNER')) {
+          datasetRole = 'OWNER';
+        }
+
+        if (datasetId) {
+          await grantDatasetAccess(fullRequest.gcpProjectId, datasetId, fullRequest.requesterEmail, datasetRole);
+        } else {
+          // Fallback to project-level if can't parse dataset
+          console.warn(`[BULK-APPROVE] Could not parse datasetId from ${assetName}, falling back to project IAM`);
+          await grantIamAccess(fullRequest.gcpProjectId, fullRequest.requesterEmail, requestedRole);
+        }
+        const role = requestedRole;
 
         // Create granted access record
         const grantedAccess = await grantedAccessService.createGrantedAccess({

@@ -96,7 +96,6 @@ SA_ROLES=(
     "roles/datastore.user"
     "roles/datalineage.viewer"
     "roles/aiplatform.user"
-    "roles/resourcemanager.projectIamAdmin"
     "roles/geminidataanalytics.dataAgentCreator"
     "roles/geminidataanalytics.dataAgentUser"
     "roles/cloudaicompanion.user"
@@ -234,11 +233,6 @@ gcloud projects add-iam-policy-binding $ext_project \\
 gcloud projects add-iam-policy-binding $ext_project \\
     --member="serviceAccount:\$SERVICE_ACCOUNT" \\
     --role="roles/aiplatform.user" --quiet
-
-# Grant users IAM access when requests are approved
-gcloud projects add-iam-policy-binding $ext_project \\
-    --member="serviceAccount:\$SERVICE_ACCOUNT" \\
-    --role="roles/resourcemanager.projectIamAdmin" --quiet
 
 COMMANDS
     done
