@@ -100,12 +100,31 @@ SA_ROLES=(
     "roles/geminidataanalytics.dataAgentCreator"
     "roles/geminidataanalytics.dataAgentUser"
     "roles/cloudaicompanion.user"
+    "roles/storage.objectAdmin"
 )
 
 for role in "${SA_ROLES[@]}"; do
     echo "  Granting $role..."
     gcloud projects add-iam-policy-binding $GCP_PROJECT_ID \
         --member="serviceAccount:$SERVICE_ACCOUNT" \
+        --role="$role" \
+        --quiet 2>/dev/null || true
+done
+
+# Grant Cloud Build service account roles (for --cloud-build deployments)
+echo ""
+echo -e "${BLUE}Granting Cloud Build service account roles...${NC}"
+CLOUDBUILD_SA="${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com"
+
+CLOUDBUILD_ROLES=(
+    "roles/storage.objectViewer"
+    "roles/logging.logWriter"
+)
+
+for role in "${CLOUDBUILD_ROLES[@]}"; do
+    echo "  Granting $role to Cloud Build SA..."
+    gcloud projects add-iam-policy-binding $GCP_PROJECT_ID \
+        --member="serviceAccount:$CLOUDBUILD_SA" \
         --role="$role" \
         --quiet 2>/dev/null || true
 done
