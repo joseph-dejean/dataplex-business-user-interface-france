@@ -317,6 +317,57 @@ dataplex-business-user-interface/
 | Cloud Resource Manager API | Project listing, IAM policy management |
 | Firestore | Persistent storage for access requests, notifications, admin roles |
 
+## External Projects (Multi-Project Setup)
+
+If your BigQuery data is in different GCP projects than where you deploy the app, you need to grant the Cloud Run service account access to those external projects.
+
+### Required Roles on Each External Project
+
+| Role | Purpose |
+|------|---------|
+| `roles/bigquery.dataViewer` | Read table data |
+| `roles/bigquery.metadataViewer` | View table/column metadata |
+| `roles/bigquery.jobUser` | Run queries (required for Conversational Analytics) |
+| `roles/bigquery.dataOwner` | Grant dataset access to users (required for access approval) |
+| `roles/datacatalog.viewer` | View Data Catalog entries |
+| `roles/datalineage.viewer` | View Data Lineage |
+
+### Setup Commands
+
+Run these commands on each external project (replace `SERVICE_ACCOUNT` with your Cloud Run service account):
+
+```bash
+# Get your service account (from the deployment project)
+SERVICE_ACCOUNT="PROJECT_NUMBER-compute@developer.gserviceaccount.com"
+
+# Grant roles on the external project
+gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
+    --member="serviceAccount:$SERVICE_ACCOUNT" \
+    --role="roles/bigquery.dataViewer"
+
+gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
+    --member="serviceAccount:$SERVICE_ACCOUNT" \
+    --role="roles/bigquery.metadataViewer"
+
+gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
+    --member="serviceAccount:$SERVICE_ACCOUNT" \
+    --role="roles/bigquery.jobUser"
+
+gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
+    --member="serviceAccount:$SERVICE_ACCOUNT" \
+    --role="roles/bigquery.dataOwner"
+
+gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
+    --member="serviceAccount:$SERVICE_ACCOUNT" \
+    --role="roles/datacatalog.viewer"
+
+gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
+    --member="serviceAccount:$SERVICE_ACCOUNT" \
+    --role="roles/datalineage.viewer"
+```
+
+> **Tip:** The `deployment/setup-roles.sh` script automatically generates these commands for you.
+
 ## License
 
 ISC License. See [LICENSE](LICENSE) for details.

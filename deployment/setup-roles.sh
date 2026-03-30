@@ -151,18 +151,33 @@ HEADER
         cat >> external-projects-commands.sh << COMMANDS
 # --- Project: $ext_project ---
 echo "Granting access on $ext_project..."
+
+# Read table data
 gcloud projects add-iam-policy-binding $ext_project \\
     --member="serviceAccount:\$SERVICE_ACCOUNT" \\
     --role="roles/bigquery.dataViewer" --quiet
 
+# View table metadata
 gcloud projects add-iam-policy-binding $ext_project \\
     --member="serviceAccount:\$SERVICE_ACCOUNT" \\
     --role="roles/bigquery.metadataViewer" --quiet
 
+# Run queries (required for Conversational Analytics API)
+gcloud projects add-iam-policy-binding $ext_project \\
+    --member="serviceAccount:\$SERVICE_ACCOUNT" \\
+    --role="roles/bigquery.jobUser" --quiet
+
+# Modify dataset ACLs (required to grant access to users)
+gcloud projects add-iam-policy-binding $ext_project \\
+    --member="serviceAccount:\$SERVICE_ACCOUNT" \\
+    --role="roles/bigquery.dataOwner" --quiet
+
+# View Data Catalog entries
 gcloud projects add-iam-policy-binding $ext_project \\
     --member="serviceAccount:\$SERVICE_ACCOUNT" \\
     --role="roles/datacatalog.viewer" --quiet
 
+# View Data Lineage
 gcloud projects add-iam-policy-binding $ext_project \\
     --member="serviceAccount:\$SERVICE_ACCOUNT" \\
     --role="roles/datalineage.viewer" --quiet
