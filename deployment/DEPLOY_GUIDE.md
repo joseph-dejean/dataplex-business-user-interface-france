@@ -11,7 +11,7 @@
 ## Step 2: Clone the Repository
 
 ```bash
-git clone https://github.com/joseph-dejean/tst1.git
+git clone https://github.com/joseph-dejean/dataplex-business-user-interface.git
 cd tst1/deployment
 ```
 
