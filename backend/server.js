@@ -4887,6 +4887,7 @@ app.post('/api/v1/access/revoke', async (req, res) => {
   try {
     const { grantId } = req.body;
     const revokerEmail = req.headers['x-user-email'];
+    const userAccessToken = req.headers.authorization?.split(' ')[1];
     console.log(`[REVOKE] Request for grantId=${grantId} by ${revokerEmail}`);
 
     if (!grantId) {
@@ -4928,7 +4929,18 @@ app.post('/api/v1/access/revoke', async (req, res) => {
 
       if (iamProjectId && datasetId) {
         try {
-          const bq = new BigQuery({ projectId: iamProjectId });
+          // Use admin's OAuth token to revoke access (admin needs bigquery.dataOwner on dataset)
+          let bq;
+          if (userAccessToken) {
+            const { OAuth2Client } = require('google-auth-library');
+            const oauth2Client = new OAuth2Client();
+            oauth2Client.setCredentials({ access_token: userAccessToken });
+            bq = new BigQuery({ projectId: iamProjectId, authClient: oauth2Client });
+            console.log(`[REVOKE] Using admin's OAuth token`);
+          } else {
+            bq = new BigQuery({ projectId: iamProjectId });
+            console.log(`[REVOKE] Using service account (no user token)`);
+          }
           const dataset = bq.dataset(datasetId);
           const [metadata] = await dataset.getMetadata();
           let accessList = metadata.access || [];
@@ -5201,6 +5213,7 @@ app.post('/api/v1/access/bulk-approve', async (req, res) => {
   try {
     const { requestIds } = req.body;
     const reviewerEmail = req.headers['x-user-email'];
+    const userAccessToken = req.headers.authorization?.split(' ')[1];
 
     if (!requestIds || !Array.isArray(requestIds) || requestIds.length === 0) {
       return res.status(400).json({ success: false, error: 'Request IDs array is required' });
@@ -5247,7 +5260,8 @@ app.post('/api/v1/access/bulk-approve', async (req, res) => {
         }
 
         if (datasetId) {
-          await grantDatasetAccess(fullRequest.gcpProjectId, datasetId, fullRequest.requesterEmail, datasetRole);
+          // Use admin's OAuth token to grant access (admin needs bigquery.dataOwner on dataset)
+          await grantDatasetAccess(fullRequest.gcpProjectId, datasetId, fullRequest.requesterEmail, datasetRole, userAccessToken);
         } else {
           // Fallback to project-level if can't parse dataset
           console.warn(`[BULK-APPROVE] Could not parse datasetId from ${assetName}, falling back to project IAM`);

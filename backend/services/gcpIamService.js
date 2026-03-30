@@ -1,6 +1,22 @@
 const { google } = require('googleapis');
-const { GoogleAuth } = require('google-auth-library');
+const { GoogleAuth, OAuth2Client } = require('google-auth-library');
 const { BigQuery } = require('@google-cloud/bigquery');
+
+/**
+ * Create a BigQuery client, optionally using a user's access token.
+ * @param {string} projectId - The GCP Project ID.
+ * @param {string} [userAccessToken] - Optional user OAuth access token.
+ */
+const createBigQueryClient = (projectId, userAccessToken) => {
+    if (userAccessToken) {
+        // Use user's OAuth token
+        const oauth2Client = new OAuth2Client();
+        oauth2Client.setCredentials({ access_token: userAccessToken });
+        return new BigQuery({ projectId, authClient: oauth2Client });
+    }
+    // Fall back to ADC (service account)
+    return new BigQuery({ projectId });
+};
 
 /**
  * Grant access to a user on a specific BigQuery dataset.
@@ -10,12 +26,14 @@ const { BigQuery } = require('@google-cloud/bigquery');
  * @param {string} datasetId - The BigQuery dataset ID.
  * @param {string} email - The email of the user to grant access to.
  * @param {string} role - The BigQuery role (READER, WRITER, or OWNER). Defaults to READER.
+ * @param {string} [userAccessToken] - Optional admin's OAuth token (if provided, uses user auth instead of service account).
  */
-const grantDatasetAccess = async (projectId, datasetId, email, role = 'READER') => {
+const grantDatasetAccess = async (projectId, datasetId, email, role = 'READER', userAccessToken = null) => {
     console.log(`[DATASET-ACCESS] Granting ${role} access: User=${email}, Dataset=${projectId}.${datasetId}`);
+    console.log(`[DATASET-ACCESS] Using ${userAccessToken ? 'user OAuth token' : 'service account'}`);
 
     try {
-        const bigquery = new BigQuery({ projectId });
+        const bigquery = createBigQueryClient(projectId, userAccessToken);
         const dataset = bigquery.dataset(datasetId);
 
         // Get current dataset metadata
@@ -59,12 +77,14 @@ const grantDatasetAccess = async (projectId, datasetId, email, role = 'READER') 
  * @param {string} datasetId - The BigQuery dataset ID.
  * @param {string} email - The email of the user to revoke access from.
  * @param {string} role - The BigQuery role to revoke (READER, WRITER, or OWNER).
+ * @param {string} [userAccessToken] - Optional admin's OAuth token (if provided, uses user auth instead of service account).
  */
-const revokeDatasetAccess = async (projectId, datasetId, email, role = 'READER') => {
+const revokeDatasetAccess = async (projectId, datasetId, email, role = 'READER', userAccessToken = null) => {
     console.log(`[DATASET-ACCESS] Revoking ${role} access: User=${email}, Dataset=${projectId}.${datasetId}`);
+    console.log(`[DATASET-ACCESS] Using ${userAccessToken ? 'user OAuth token' : 'service account'}`);
 
     try {
-        const bigquery = new BigQuery({ projectId });
+        const bigquery = createBigQueryClient(projectId, userAccessToken);
         const dataset = bigquery.dataset(datasetId);
 
         // Get current dataset metadata
