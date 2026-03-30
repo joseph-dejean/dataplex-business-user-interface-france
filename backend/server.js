@@ -256,20 +256,24 @@ app.post('/api/v1/chat', async (req, res) => {
     }
 
     // Use Conversational Analytics API with inline context for BigQuery tables
-    const projectId_env = PROJECT_ID;
+    // IMPORTANT: CA API must be called from the SAME project where the table lives
+    // Cross-project CA API calls are NOT supported by Google
+    const caProjectId = projectId; // Use the TABLE's project, not the deployment project
+
     // CA API requires a specific region (not multi-region like 'us' or 'eu'), default to europe-west1
     const rawLocation = process.env.GCP_LOCATION || 'europe-west1';
     const location = rawLocation.includes('-') ? rawLocation : 'europe-west1';
 
-    if (!projectId_env) {
-      console.error('[CHAT] CRITICAL: No project ID found in environment variables!');
+    if (!caProjectId) {
+      console.error('[CHAT] CRITICAL: No project ID found for CA API call!');
       return res.status(200).json({
-        reply: "Configuration error: The server is not properly configured with a Google Cloud Project ID. Please contact your administrator.",
+        reply: "Could not determine the project for this table. The table's fully qualified name may be invalid.",
         error: true
       });
     }
 
-    const chatUrl = `https://geminidataanalytics.googleapis.com/v1beta/projects/${projectId_env}/locations/${location}:chat`;
+    console.log(`[CA_DEBUG] Using table's project for CA API: ${caProjectId}`);
+    const chatUrl = `https://geminidataanalytics.googleapis.com/v1beta/projects/${caProjectId}/locations/${location}:chat`;
 
     // Build BigQuery data source reference
     // For Data Products, include all tables; for single tables, include just that table
@@ -394,10 +398,11 @@ app.post('/api/v1/chat', async (req, res) => {
     const existingConversationId = context.conversationId; // From frontend state
 
     // Try to create/get a persistent Data Agent for better performance and caching
+    // Use the TABLE's project for DataAgent creation (same project requirement as CA API)
     let dataAgentName = null;
     try {
       dataAgentName = await getOrCreateDataAgent(tableReferences, systemInstruction, {
-        projectId: projectId_env,
+        projectId: caProjectId,
         location: location,
         accessToken: adcToken
       });
