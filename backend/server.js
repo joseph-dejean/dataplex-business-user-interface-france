@@ -385,11 +385,13 @@ app.post('/api/v1/chat', async (req, res) => {
 
     const systemInstruction = 'You are a helpful Data Steward assistant for Dataplex. Answer questions about the data tables based on their schema and metadata. Be concise and accurate.';
 
-    // Use the USER's OAuth token for CA API - this allows cross-project queries
-    // if the user has permissions on the target project (no service account roles needed)
-    console.log('[CA_DEBUG] Step 3: Using user OAuth token for CA API...');
-    const caToken = userAccessToken;
-    console.log(`Using user's OAuth token for CA API call (location: ${location})`);
+    // Use ADC (service account) for CA API - user OAuth tokens don't have the required scope
+    // The service account needs geminidataanalytics roles on the target project
+    console.log('[CA_DEBUG] Step 3: Getting ADC token for CA API...');
+    const adcAuth = new AdcGoogleAuth();
+    const adcClient = await adcAuth.getClient();
+    const caToken = (await adcClient.getAccessToken()).token;
+    console.log(`Using service account for CA API call (location: ${location})`);
 
     let chatPayload;
     const existingConversationId = context.conversationId; // From frontend state
