@@ -335,6 +335,7 @@ If your BigQuery data is in different GCP projects than where you deploy the app
 | `roles/geminidataanalytics.dataAgentUser` | CA API - use data agents |
 | `roles/cloudaicompanion.user` | Gemini for Google Cloud |
 | `roles/aiplatform.user` | Vertex AI access |
+| `roles/resourcemanager.projectIamAdmin` | Grant users IAM access when requests approved |
 
 > **Important:** For CA API (AI Chat) to work across projects, both projects must be in the **same GCP Organization**. If your projects are standalone (no organization), CA API will only work for tables in the deployment project. You can create a free organization using [Cloud Identity Free](https://cloud.google.com/identity/signup/free).
 
@@ -386,6 +387,10 @@ gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
 gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
     --member="serviceAccount:$SERVICE_ACCOUNT" \
     --role="roles/aiplatform.user"
+
+gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
+    --member="serviceAccount:$SERVICE_ACCOUNT" \
+    --role="roles/resourcemanager.projectIamAdmin"
 ```
 
 > **Tip:** The `deployment/setup-roles.sh` script automatically generates these commands for you.

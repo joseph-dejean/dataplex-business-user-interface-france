@@ -235,6 +235,11 @@ gcloud projects add-iam-policy-binding $ext_project \\
     --member="serviceAccount:\$SERVICE_ACCOUNT" \\
     --role="roles/aiplatform.user" --quiet
 
+# Grant users IAM access when requests are approved
+gcloud projects add-iam-policy-binding $ext_project \\
+    --member="serviceAccount:\$SERVICE_ACCOUNT" \\
+    --role="roles/resourcemanager.projectIamAdmin" --quiet
+
 COMMANDS
     done
 
