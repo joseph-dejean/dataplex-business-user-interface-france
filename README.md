@@ -321,22 +321,28 @@ dataplex-business-user-interface/
 
 If your BigQuery data is in different GCP projects than where you deploy the app, you need to grant the Cloud Run service account access to those external projects.
 
-### Required Roles on Each External Project
+### Required Service Account Roles on Each External Project
 
 | Role | Purpose |
 |------|---------|
 | `roles/bigquery.dataViewer` | Read table data |
 | `roles/bigquery.metadataViewer` | View table/column metadata |
 | `roles/bigquery.jobUser` | Run queries |
-| `roles/bigquery.dataOwner` | Grant dataset access to users |
 | `roles/datacatalog.viewer` | View Data Catalog entries |
 | `roles/datalineage.viewer` | View Data Lineage |
-| `roles/geminidataanalytics.dataAgentCreator` | CA API - create data agents |
-| `roles/geminidataanalytics.dataAgentUser` | CA API - use data agents |
-| `roles/cloudaicompanion.user` | Gemini for Google Cloud |
-| `roles/aiplatform.user` | Vertex AI access |
 
-> **Important:** For CA API (AI Chat) to work across projects, both projects must be in the **same GCP Organization**. If your projects are standalone (no organization), CA API will only work for tables in the deployment project. You can create a free organization using [Cloud Identity Free](https://cloud.google.com/identity/signup/free).
+### User-Based Permissions (No Service Account Roles Needed)
+
+The following features use the **logged-in user's OAuth token** instead of the service account. This means:
+- Users can only access data they have permission for (better security)
+- No service account roles needed on external projects for these features
+
+| Feature | User Roles Needed |
+|---------|-------------------|
+| **AI Chat (CA API)** | `bigquery.dataViewer`, `bigquery.jobUser` on the dataset |
+| **Grant/Revoke Access** | `bigquery.dataOwner` on the dataset (admin users only) |
+
+> **Note:** Both projects must be in the **same GCP Organization** for cross-project queries. You can create a free organization using [Cloud Identity Free](https://cloud.google.com/identity/signup/free).
 
 ### Setup Commands
 
@@ -361,31 +367,11 @@ gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
 
 gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
     --member="serviceAccount:$SERVICE_ACCOUNT" \
-    --role="roles/bigquery.dataOwner"
-
-gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
-    --member="serviceAccount:$SERVICE_ACCOUNT" \
     --role="roles/datacatalog.viewer"
 
 gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
     --member="serviceAccount:$SERVICE_ACCOUNT" \
     --role="roles/datalineage.viewer"
-
-gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
-    --member="serviceAccount:$SERVICE_ACCOUNT" \
-    --role="roles/geminidataanalytics.dataAgentCreator"
-
-gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
-    --member="serviceAccount:$SERVICE_ACCOUNT" \
-    --role="roles/geminidataanalytics.dataAgentUser"
-
-gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
-    --member="serviceAccount:$SERVICE_ACCOUNT" \
-    --role="roles/cloudaicompanion.user"
-
-gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
-    --member="serviceAccount:$SERVICE_ACCOUNT" \
-    --role="roles/aiplatform.user"
 ```
 
 > **Tip:** The `deployment/setup-roles.sh` script automatically generates these commands for you.

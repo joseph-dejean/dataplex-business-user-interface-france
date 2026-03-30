@@ -91,16 +91,14 @@ SA_ROLES=(
     "roles/bigquery.dataViewer"
     "roles/bigquery.metadataViewer"
     "roles/bigquery.jobUser"
-    "roles/bigquery.dataOwner"
     "roles/datacatalog.viewer"
     "roles/datastore.user"
     "roles/datalineage.viewer"
     "roles/aiplatform.user"
-    "roles/geminidataanalytics.dataAgentCreator"
-    "roles/geminidataanalytics.dataAgentUser"
-    "roles/cloudaicompanion.user"
     "roles/storage.objectAdmin"
 )
+# NOTE: CA API and access granting use the logged-in user's OAuth token,
+# so geminidataanalytics and bigquery.dataOwner roles are not needed for SA.
 
 for role in "${SA_ROLES[@]}"; do
     echo "  Granting $role..."
@@ -195,15 +193,10 @@ gcloud projects add-iam-policy-binding $ext_project \\
     --member="serviceAccount:\$SERVICE_ACCOUNT" \\
     --role="roles/bigquery.metadataViewer" --quiet
 
-# Run queries (required for Conversational Analytics API)
+# Run queries
 gcloud projects add-iam-policy-binding $ext_project \\
     --member="serviceAccount:\$SERVICE_ACCOUNT" \\
     --role="roles/bigquery.jobUser" --quiet
-
-# Modify dataset ACLs (required to grant access to users)
-gcloud projects add-iam-policy-binding $ext_project \\
-    --member="serviceAccount:\$SERVICE_ACCOUNT" \\
-    --role="roles/bigquery.dataOwner" --quiet
 
 # View Data Catalog entries
 gcloud projects add-iam-policy-binding $ext_project \\
@@ -215,24 +208,10 @@ gcloud projects add-iam-policy-binding $ext_project \\
     --member="serviceAccount:\$SERVICE_ACCOUNT" \\
     --role="roles/datalineage.viewer" --quiet
 
-# CA API - create/use data agents for cross-project tables
-gcloud projects add-iam-policy-binding $ext_project \\
-    --member="serviceAccount:\$SERVICE_ACCOUNT" \\
-    --role="roles/geminidataanalytics.dataAgentCreator" --quiet
-
-gcloud projects add-iam-policy-binding $ext_project \\
-    --member="serviceAccount:\$SERVICE_ACCOUNT" \\
-    --role="roles/geminidataanalytics.dataAgentUser" --quiet
-
-# Gemini for Google Cloud
-gcloud projects add-iam-policy-binding $ext_project \\
-    --member="serviceAccount:\$SERVICE_ACCOUNT" \\
-    --role="roles/cloudaicompanion.user" --quiet
-
-# Vertex AI access
-gcloud projects add-iam-policy-binding $ext_project \\
-    --member="serviceAccount:\$SERVICE_ACCOUNT" \\
-    --role="roles/aiplatform.user" --quiet
+# NOTE: CA API and access granting use the logged-in user's OAuth token,
+# so no service account roles are needed for those features.
+# Users need their own permissions (bigquery.dataViewer, bigquery.jobUser for chat;
+# bigquery.dataOwner for granting access).
 
 COMMANDS
     done
