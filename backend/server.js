@@ -3365,7 +3365,9 @@ Example output: {"searchTerms":["customer","orders","purchase"],"dataplexQuery":
           name: `projects/${projId}/locations/${location}`,
           query: searchQuery,
           pageSize: semanticSearch ? 50 : (pageSize || 20),
-          pageToken: pageToken
+          pageToken: pageToken,
+          // Use native Dataplex semantic search when enabled
+          semanticSearch: semanticSearch || false
         };
         const [results] = await client.searchEntries(request);
         console.log(`[SEARCH] Project ${projId}: found ${results ? results.length : 0} results`);
