@@ -133,8 +133,17 @@ const SearchPage: React.FC<SearchPageProps> = ({ searchResult }) => {
     }
   }, [searchTerm]);
 
+  // Track if filters actually changed (not just initial load)
+  const filtersInitialized = useRef(false);
+
   useEffect(() => {
-    console.log("Search result:", searchResult);
+    // Skip on first render - don't re-search if we have persisted results
+    if (!filtersInitialized.current) {
+      filtersInitialized.current = true;
+      return;
+    }
+
+    console.log("Filters changed, triggering search");
     dispatch({ type: 'resources/setItemsPreviousPageRequest', payload: null });
     dispatch({ type: 'resources/setItemsPageRequest', payload: null });
     dispatch({ type: 'resources/setItemsStoreData', payload: [] });
@@ -153,7 +162,16 @@ const SearchPage: React.FC<SearchPageProps> = ({ searchResult }) => {
     setPrevFilters(filters);
   }, [filters]);
 
+  // Track if aspects actually changed (not just initial load)
+  const aspectsInitialized = useRef(false);
+
   useEffect(() => {
+    // Skip on first render - don't re-search if we have persisted results
+    if (!aspectsInitialized.current) {
+      aspectsInitialized.current = true;
+      return;
+    }
+
     dispatch({ type: 'resources/setItemsPreviousPageRequest', payload: null });
     dispatch({ type: 'resources/setItemsPageRequest', payload: null });
     dispatch({ type: 'resources/setItemsStoreData', payload: [] });
@@ -169,7 +187,16 @@ const SearchPage: React.FC<SearchPageProps> = ({ searchResult }) => {
     }));
   }, [selectedAspects]);
 
+  // Track if searchType actually changed (not just initial load)
+  const searchTypeInitialized = useRef(false);
+
   useEffect(() => {
+    // Skip on first render - don't clear data if we have persisted results
+    if (!searchTypeInitialized.current) {
+      searchTypeInitialized.current = true;
+      return;
+    }
+
     dispatch({ type: 'resources/setItemsPreviousPageRequest', payload: null });
     dispatch({ type: 'resources/setItemsPageRequest', payload: null });
     dispatch({ type: 'resources/setItemsStoreData', payload: [] });
