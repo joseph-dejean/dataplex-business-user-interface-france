@@ -76,7 +76,7 @@ const AdminAccessManagement = () => {
   const dispatch = useAppDispatch();
   const { showSuccess, showError } = useNotification();
 
-  const { isAdmin, currentUserRole, allAdmins, grantedAccesses } = useAppSelector(
+  const { isAdmin, isDataOwner, hasAdminCapabilities, currentUserRole, allAdmins, grantedAccesses } = useAppSelector(
     (state) => state.admin
   );
 
@@ -340,10 +340,10 @@ const AdminAccessManagement = () => {
     );
   }
 
-  if (!isAdmin) {
+  if (!hasAdminCapabilities) {
     return (
       <Box sx={{ backgroundColor: '#F8FAFD', minHeight: '100vh', p: 3 }}>
-        <Alert severity="error">You do not have admin access. Contact a super-admin to request access.</Alert>
+        <Alert severity="error">You do not have admin access. Contact a super-admin to request access, or request OWNER role on a BigQuery dataset.</Alert>
       </Box>
     );
   }
@@ -360,7 +360,15 @@ const AdminAccessManagement = () => {
             Access Management
           </Typography>
           <Chip
-            label={currentUserRole?.role === 'super-admin' ? 'Super Admin' : 'Project Admin'}
+            label={
+              currentUserRole?.role === 'super-admin'
+                ? 'Super Admin'
+                : currentUserRole?.role === 'project-admin'
+                  ? 'Project Admin'
+                  : isDataOwner
+                    ? 'Data Owner'
+                    : 'Admin'
+            }
             color="primary"
             size="small"
             sx={{ ml: 2 }}

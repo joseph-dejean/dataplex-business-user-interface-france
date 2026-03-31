@@ -256,13 +256,17 @@ app.post('/api/v1/chat', async (req, res) => {
     }
 
     // Use Conversational Analytics API with inline context for BigQuery tables
-    // IMPORTANT: CA API must be called from the SAME project where the table lives
-    // Cross-project CA API calls are NOT supported by Google
-    const caProjectId = projectId; // Use the TABLE's project, not the deployment project
+    // Cross-project IS supported: use deployment project for billing/execution, table's project for data
+    // See: https://codelabs.developers.google.com/ca-api-bigquery
+    const deploymentProjectId = process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT_ID;
+    const tableProjectId = projectId; // The project where the table lives (for BigQueryTableReference)
 
     // CA API requires a specific region (not multi-region like 'us' or 'eu'), default to europe-west1
     const rawLocation = process.env.GCP_LOCATION || 'europe-west1';
     const location = rawLocation.includes('-') ? rawLocation : 'europe-west1';
+
+    // Use deployment project for the API call (billing/execution), table references will specify their own projects
+    const caProjectId = deploymentProjectId || tableProjectId;
 
     if (!caProjectId) {
       console.error('[CHAT] CRITICAL: No project ID found for CA API call!');
@@ -272,7 +276,8 @@ app.post('/api/v1/chat', async (req, res) => {
       });
     }
 
-    console.log(`[CA_DEBUG] Using table's project for CA API: ${caProjectId}`);
+    console.log(`[CA_DEBUG] Using deployment project for CA API billing: ${caProjectId}`);
+    console.log(`[CA_DEBUG] Table's project for data access: ${tableProjectId}`);
     const chatUrl = `https://geminidataanalytics.googleapis.com/v1beta/projects/${caProjectId}/locations/${location}:chat`;
 
     // Build BigQuery data source reference
@@ -2788,11 +2793,21 @@ app.get('/api/v1/app-configs', async (req, res) => {
 
     // Fetch user role if email is provided
     let userAdminRole = null;
+    let isDataOwner = false;
+    let ownedDatasets = [];
     const userEmail = req.query.email || req.headers['x-user-email'];
     if (userEmail) {
       try {
         // Use centralized resolution logic (Firestore -> Env -> IAM -> Steward)
         userAdminRole = await adminService.resolveAdminRole(userEmail);
+
+        // If not a regular admin, check if they're a data owner
+        if (!userAdminRole) {
+          const allProjects = (process.env.EXTERNAL_PROJECTS || '').split(/[\s,]+/).filter(Boolean);
+          allProjects.unshift(process.env.GOOGLE_CLOUD_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT);
+          ownedDatasets = await adminService.getOwnedDatasets(userEmail, allProjects);
+          isDataOwner = ownedDatasets.length > 0;
+        }
       } catch (err) {
         console.error('Error fetching user role for app config:', err);
       }
@@ -2811,7 +2826,10 @@ app.get('/api/v1/app-configs', async (req, res) => {
       defaultSearchProduct: configData.products || 'All',
       defaultSearchAssets: configData.assets || '',
       browseByAspectTypes: configData.aspectType || [],
-      userRole: userAdminRole
+      userRole: userAdminRole,
+      isDataOwner: isDataOwner,
+      ownedDatasets: ownedDatasets,
+      hasAdminCapabilities: userAdminRole !== null || isDataOwner
     };
 
     res.json(configs);
@@ -4424,6 +4442,7 @@ app.post('/api/v1/access-request', async (req, res) => {
 /**
  * GET /api/v1/access-requests
  * Get all access requests with filtering based on user role
+ * Data owners automatically see requests for their datasets
  */
 app.get('/api/v1/access-requests', async (req, res) => {
   try {
@@ -4440,10 +4459,47 @@ app.get('/api/v1/access-requests', async (req, res) => {
     if (status) filters.status = status.toUpperCase();
     if (projectId) filters.projectId = projectId;
 
-    if (userRole === 'admin') {
+    // Check if user is a regular admin
+    const adminRole = await adminService.resolveAdminRole(userEmail);
+    const isRegularAdmin = adminRole && (adminRole.role === 'super-admin' || adminRole.role === 'project-admin');
+
+    if (userRole === 'admin' && isRegularAdmin) {
+      // Regular admins see all requests (or filtered by their assigned projects)
       // Fetch all
-    } else if (userRole === 'manager') {
-      if (projectId) filters.projectId = projectId;
+    } else if (userRole === 'admin' || userRole === 'manager') {
+      // User claims admin role - check if they're a data owner
+      const allProjects = (process.env.EXTERNAL_PROJECTS || '').split(/[\s,]+/).filter(Boolean);
+      allProjects.unshift(process.env.GOOGLE_CLOUD_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT);
+
+      const ownedDatasets = await adminService.getOwnedDatasets(userEmail, allProjects);
+
+      if (ownedDatasets.length > 0) {
+        // User is a data owner - fetch all requests, then filter to their datasets
+        let allRequests = await getAccessRequests(filters);
+
+        // Filter to only show requests for datasets they own
+        allRequests = allRequests.filter(request => {
+          const assetName = request.assetName || '';
+          const cleanName = assetName.replace(/^bigquery:/, '');
+          const parts = cleanName.split('.');
+          if (parts.length >= 2) {
+            const reqProjectId = parts[0];
+            const reqDatasetId = parts[1];
+            return ownedDatasets.some(d => d.projectId === reqProjectId && d.datasetId === reqDatasetId);
+          }
+          return false;
+        });
+
+        return res.status(200).json({
+          success: true,
+          data: allRequests,
+          count: allRequests.length,
+          isDataOwner: true
+        });
+      } else {
+        // Not admin and not data owner - show only their own requests
+        filters.requesterEmail = userEmail;
+      }
     } else {
       filters.requesterEmail = userEmail;
     }
@@ -4903,19 +4959,12 @@ app.post('/api/v1/access/revoke', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Access already revoked' });
     }
 
-    // 2. Check if revoker is admin for this project
-    const isAdmin = await adminService.isProjectAdmin(revokerEmail, grant.gcpProjectId);
-    if (!isAdmin) {
-      return res.status(403).json({ success: false, error: 'Not authorized to revoke access for this project' });
-    }
-
-    // 3. Remove from BigQuery dataset-level IAM (matching how we grant)
-    let revokeIamStatus = 'NOT_ATTEMPTED';
+    // 2. Parse datasetId from assetName first (needed for permission check)
     const assetName = grant.assetName;
     const userEmail = grant.userEmail;
+    let iamProjectId, datasetId;
 
     if (assetName) {
-      let iamProjectId, datasetId;
       const bqMatch = assetName.match(/projects\/([^/]+)\/datasets\/([^/]+)/);
       if (bqMatch) {
         iamProjectId = bqMatch[1];
@@ -4925,44 +4974,53 @@ app.post('/api/v1/access/revoke', async (req, res) => {
         const parts = clean.split('.');
         if (parts.length >= 2) { iamProjectId = parts[0]; datasetId = parts[1]; }
       }
+    }
 
-      if (iamProjectId && datasetId) {
-        try {
-          // Use admin's OAuth token to revoke access (admin needs bigquery.dataOwner on dataset)
-          let bq;
-          if (userAccessToken) {
-            const { OAuth2Client } = require('google-auth-library');
-            const oauth2Client = new OAuth2Client();
-            oauth2Client.setCredentials({ access_token: userAccessToken });
-            bq = new BigQuery({ projectId: iamProjectId, authClient: oauth2Client });
-            console.log(`[REVOKE] Using admin's OAuth token`);
-          } else {
-            bq = new BigQuery({ projectId: iamProjectId });
-            console.log(`[REVOKE] Using service account (no user token)`);
-          }
-          const dataset = bq.dataset(datasetId);
-          const [metadata] = await dataset.getMetadata();
-          let accessList = metadata.access || [];
+    // 3. Check if revoker is admin or data owner for this dataset
+    const canManage = await adminService.canManageDatasetAccess(revokerEmail, grant.gcpProjectId, datasetId);
+    if (!canManage) {
+      return res.status(403).json({ success: false, error: 'Not authorized to revoke access for this dataset' });
+    }
 
-          const initialLength = accessList.length;
-          accessList = accessList.filter(a => a.userByEmail?.toLowerCase() !== userEmail.toLowerCase());
+    // 4. Remove from BigQuery dataset-level IAM (matching how we grant)
+    let revokeIamStatus = 'NOT_ATTEMPTED';
 
-          if (accessList.length < initialLength) {
-            await dataset.setMetadata({ access: accessList });
-            revokeIamStatus = 'SUCCESS';
-            console.log(`[REVOKE] IAM access removed for ${userEmail} on ${datasetId}`);
-          } else {
-            revokeIamStatus = 'NOT_FOUND_IN_IAM';
-            console.log(`[REVOKE] User ${userEmail} not found in dataset ${datasetId} IAM`);
-          }
-        } catch (iamErr) {
-          console.warn('[REVOKE] IAM removal failed:', iamErr.message);
-          revokeIamStatus = 'FAILED';
+    if (iamProjectId && datasetId) {
+      try {
+        // Use admin's OAuth token to revoke access (admin needs bigquery.dataOwner on dataset)
+        let bq;
+        if (userAccessToken) {
+          const { OAuth2Client } = require('google-auth-library');
+          const oauth2Client = new OAuth2Client();
+          oauth2Client.setCredentials({ access_token: userAccessToken });
+          bq = new BigQuery({ projectId: iamProjectId, authClient: oauth2Client });
+          console.log(`[REVOKE] Using admin's OAuth token`);
+        } else {
+          bq = new BigQuery({ projectId: iamProjectId });
+          console.log(`[REVOKE] Using service account (no user token)`);
         }
+        const dataset = bq.dataset(datasetId);
+        const [metadata] = await dataset.getMetadata();
+        let accessList = metadata.access || [];
+
+        const initialLength = accessList.length;
+        accessList = accessList.filter(a => a.userByEmail?.toLowerCase() !== userEmail.toLowerCase());
+
+        if (accessList.length < initialLength) {
+          await dataset.setMetadata({ access: accessList });
+          revokeIamStatus = 'SUCCESS';
+          console.log(`[REVOKE] IAM access removed for ${userEmail} on ${datasetId}`);
+        } else {
+          revokeIamStatus = 'NOT_FOUND_IN_IAM';
+          console.log(`[REVOKE] User ${userEmail} not found in dataset ${datasetId} IAM`);
+        }
+      } catch (iamErr) {
+        console.warn('[REVOKE] IAM removal failed:', iamErr.message);
+        revokeIamStatus = 'FAILED';
       }
     }
 
-    // 4. Update Firestore via grantedAccessService (uses correct 'granted-accesses' collection)
+    // 5. Update Firestore via grantedAccessService (uses correct 'granted-accesses' collection)
     const revokedGrant = await grantedAccessService.revokeAccess(grantId, revokerEmail);
 
     // 5. Send notification (non-blocking)
@@ -4997,13 +5055,29 @@ app.get('/api/v1/admin/check', async (req, res) => {
       return res.status(400).json({ success: false, error: 'User email is required' });
     }
 
-    // Use centralized resolution logic (Firestore -> Env -> IAM)
+    // Use centralized resolution logic (Firestore -> Env -> IAM -> Data Steward)
     const adminRole = await adminService.resolveAdminRole(userEmail);
+
+    // Also check if user is a data owner (has OWNER role on any datasets)
+    let ownedDatasets = [];
+    let isDataOwner = false;
+
+    if (!adminRole) {
+      // Only check data ownership if not already an admin (to avoid extra API calls)
+      const allProjects = (process.env.EXTERNAL_PROJECTS || '').split(/[\s,]+/).filter(Boolean);
+      allProjects.unshift(process.env.GOOGLE_CLOUD_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT);
+
+      ownedDatasets = await adminService.getOwnedDatasets(userEmail, allProjects);
+      isDataOwner = ownedDatasets.length > 0;
+    }
 
     return res.status(200).json({
       success: true,
       isAdmin: adminRole !== null,
-      role: adminRole
+      isDataOwner: isDataOwner,
+      hasAdminCapabilities: adminRole !== null || isDataOwner,
+      role: adminRole,
+      ownedDatasets: ownedDatasets
     });
   } catch (error) {
     console.error('Error checking admin status:', error);
@@ -5231,14 +5305,7 @@ app.post('/api/v1/access/bulk-approve', async (req, res) => {
           continue;
         }
 
-        // Check admin permission
-        const isAdmin = await adminService.isProjectAdmin(reviewerEmail, fullRequest.gcpProjectId);
-        if (!isAdmin) {
-          results.failed.push({ requestId, error: 'Not authorized' });
-          continue;
-        }
-
-        // Parse datasetId from assetName
+        // Parse datasetId from assetName first (needed for permission check)
         // Formats: "bigquery:project.dataset.table", "project.dataset.table", etc.
         let datasetId = null;
         const assetName = fullRequest.assetName || '';
@@ -5246,6 +5313,13 @@ app.post('/api/v1/access/bulk-approve', async (req, res) => {
         const parts = cleanName.split('.');
         if (parts.length >= 2) {
           datasetId = parts[1]; // project.dataset.table -> dataset
+        }
+
+        // Check admin permission (includes data owners)
+        const canManage = await adminService.canManageDatasetAccess(reviewerEmail, fullRequest.gcpProjectId, datasetId);
+        if (!canManage) {
+          results.failed.push({ requestId, error: 'Not authorized' });
+          continue;
         }
 
         // Grant dataset-level access (more granular than project IAM)
@@ -5327,9 +5401,18 @@ app.post('/api/v1/access/bulk-reject', async (req, res) => {
           continue;
         }
 
-        // Check admin permission
-        const isAdmin = await adminService.isProjectAdmin(reviewerEmail, fullRequest.gcpProjectId);
-        if (!isAdmin) {
+        // Parse datasetId from assetName (needed for permission check)
+        let datasetId = null;
+        const assetName = fullRequest.assetName || '';
+        const cleanName = assetName.replace(/^bigquery:/, '');
+        const parts = cleanName.split('.');
+        if (parts.length >= 2) {
+          datasetId = parts[1];
+        }
+
+        // Check admin permission (includes data owners)
+        const canManage = await adminService.canManageDatasetAccess(reviewerEmail, fullRequest.gcpProjectId, datasetId);
+        if (!canManage) {
           results.failed.push({ requestId, error: 'Not authorized' });
           continue;
         }

@@ -125,9 +125,8 @@ const Navbar: React.FC<NavBarProps> = ({ searchBar = false, searchNavigate = tru
     navigate('/home');
   };
 
-  useEffect(() => {
-    dispatch(searchResourcesByTerm({ term: searchTerm, id_token: id_token, semanticSearch: semanticSearch, userEmail: user?.email }));
-  }, []);
+  // Note: Search is only triggered on explicit user action (handleNavSearch)
+  // We don't auto-search on mount to preserve previous results when navigating back
 
   const handleOpenNavMenu = (event: React.MouseEvent<HTMLElement>) => {
     setAnchorElNav(event.currentTarget);

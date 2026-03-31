@@ -9,4 +9,7 @@ export interface User {
   appConfig: any;
   role: any;
   isAdmin: boolean;
+  isDataOwner?: boolean;
+  ownedDatasets?: { projectId: string; datasetId: string }[];
+  hasAdminCapabilities?: boolean;
 };

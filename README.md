@@ -383,6 +383,103 @@ gcloud projects add-iam-policy-binding EXTERNAL_PROJECT_ID \
 
 > **Tip:** The `deployment/setup-roles.sh` script automatically generates these commands for you.
 
+## API Endpoints Reference
+
+### Search & Discovery
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/search` | POST | Search Dataplex catalog with optional semantic search (uses Gemini 2.5 Flash for NLP translation) |
+| `/api/v1/entries/:entryId` | GET | Get detailed entry information including aspects, schema, and metadata |
+| `/api/v1/entry/:entryId/sample-data` | GET | Get sample data preview (first N rows) from BigQuery table |
+| `/api/v1/entry/:entryId/relationships` | GET | Auto-detect relationships between tables in a dataset |
+| `/api/v1/aspect-types` | GET | List all aspect types configured in Dataplex |
+
+### AI Chat (Conversational Analytics)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/chat` | POST | Send natural language queries to tables using CA API. Generates SQL, executes it, and returns results with optional charts |
+
+**Note:** CA API calls are made to the **table's project**, not the deployment project. Cross-project execution (like BQ Console) is not supported by the CA API.
+
+### Access Management
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/access-request` | POST | Submit a new access request for a dataset/table |
+| `/api/v1/access-requests` | GET | List access requests (filtered by role: admin sees all, data owners see their datasets, users see their own) |
+| `/api/v1/access-request/update` | POST | Approve/reject a single request (supports dual-approval workflow) |
+| `/api/v1/access/bulk-approve` | POST | Bulk approve multiple requests |
+| `/api/v1/access/bulk-reject` | POST | Bulk reject multiple requests with optional reason |
+| `/api/v1/access/revoke` | POST | Revoke previously granted access |
+| `/api/v1/granted-accesses` | GET | List all granted accesses (active and revoked) |
+
+### Admin & Roles
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/admin/check` | GET | Check if user is admin (returns role type, data owner status, and capabilities) |
+| `/api/v1/admin/roles` | GET | List all admin roles (super-admin only) |
+| `/api/v1/admin/roles` | POST | Create/update admin role (super-admin only) |
+| `/api/v1/admin/roles/:email` | DELETE | Remove admin role (super-admin only) |
+
+### Data Products & Glossaries
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/data-products` | GET | List all data products |
+| `/api/v1/data-products/:id` | GET | Get data product details including contained tables |
+| `/api/v1/glossaries` | GET | List all glossary terms |
+| `/api/v1/glossaries/:id` | GET | Get glossary term details |
+
+### Data Quality & Lineage
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/data-scans/:entryId` | GET | Get Data Quality scan results for an entry |
+| `/api/v1/lineage/:entryId` | GET | Get upstream/downstream lineage for an entry |
+
+### Notifications
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/notifications` | GET | Get user's notifications |
+| `/api/v1/notifications/unread-count` | GET | Get count of unread notifications |
+| `/api/v1/notifications/mark-read` | POST | Mark specific notifications as read |
+| `/api/v1/notifications/mark-all-read` | POST | Mark all notifications as read |
+
+### Configuration
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/app-configs` | GET | Get app configuration (projects, aspects, user role) |
+| `/api/v1/projects` | GET | List accessible GCP projects |
+
+## Data Owner Auto-Admin Feature
+
+Users with **OWNER role on a BigQuery dataset** automatically get admin-like capabilities for that dataset:
+
+- **See Access Requests**: Data owners see pending requests for their datasets in the Admin Panel
+- **Approve/Reject**: Can approve or reject access requests for datasets they own
+- **No Explicit Admin Role Needed**: Dataset ownership in BigQuery IAM is sufficient
+
+This works alongside the regular admin hierarchy:
+- Super-admins can manage all requests
+- Project-admins can manage requests for assigned projects
+- Data owners can manage requests for their specific datasets
+
+## Technical Notes
+
+### Semantic Search
+The Dataplex `searchEntries` API is keyword-based. Semantic search is implemented using **Gemini 2.5 Flash** to translate natural language queries into optimized Dataplex search syntax.
+
+### CA API Cross-Project Limitation
+Unlike BigQuery Console where you can run queries from Project A against tables in Project B, the Conversational Analytics API requires calling the API endpoint **in the same project as the data**. Both projects must also be in the same GCP Organization.
+
+### State Persistence
+Search results and navigation state are persisted in localStorage to preserve context when using browser back/forward buttons.
+
 ## License
 
 ISC License. See [LICENSE](LICENSE) for details.

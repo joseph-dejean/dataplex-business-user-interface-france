@@ -282,7 +282,8 @@ export const resourcesSlice = createSlice({
   extraReducers: (builder) => {
     builder
       .addCase(searchResourcesByTerm.pending, (state) => {
-        state.items = [];
+        // Don't clear items on pending - keep previous results visible during loading
+        // This prevents white screen when navigating back
         state.status = 'loading';
       })
       .addCase(searchResourcesByTerm.fulfilled, (state, action) => {
@@ -302,7 +303,7 @@ export const resourcesSlice = createSlice({
         state.error = action.payload; // Use payload from rejectWithValue
       })
       .addCase(browseResourcesByAspects.pending, (state) => {
-        state.items = [];
+        // Don't clear items on pending - keep previous results visible during loading
         state.status = 'loading';
       })
       .addCase(browseResourcesByAspects.fulfilled, (state, action) => {

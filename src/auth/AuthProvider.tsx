@@ -58,7 +58,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           permissions: [],
           appConfig: configRes.data,
           role: userRole,
-          isAdmin: userRole !== null
+          isAdmin: userRole !== null,
+          isDataOwner: configRes.data.isDataOwner || false,
+          ownedDatasets: configRes.data.ownedDatasets || [],
+          hasAdminCapabilities: configRes.data.hasAdminCapabilities || userRole !== null
         };
         setUser(userData);
         localStorage.setItem('sessionUserData', JSON.stringify(userData));
