@@ -52,7 +52,7 @@ interface SearchPageProps {
   searchResult?: any[]; // Optional search results array
 }
 
-const SearchPage: React.FC<SearchPageProps> = ({ searchResult }) => {
+const SearchPage: React.FC<SearchPageProps> = ({ searchResult: _searchResult }) => {
   const { user } = useAuth();
   const dispatch = useDispatch<AppDispatch>();
   const searchTerm = useSelector((state: any) => state.search.searchTerm);
