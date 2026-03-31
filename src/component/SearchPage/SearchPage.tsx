@@ -83,6 +83,8 @@ const SearchPage: React.FC<SearchPageProps> = ({ searchResult }) => {
 
   const handleFilterChange = (selectedFilters: any[]) => {
     setFilters(selectedFilters);
+    // Sync to Redux for persistence
+    dispatch({ type: 'search/setSearchFilters', payload: { searchFilters: selectedFilters } });
   };
 
   const handleTuneIconClick = (event: React.MouseEvent) => {
