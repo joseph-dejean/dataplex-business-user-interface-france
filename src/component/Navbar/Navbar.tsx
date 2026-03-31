@@ -1,5 +1,4 @@
 import React from 'react';
-import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
@@ -99,7 +98,6 @@ const Navbar: React.FC<NavBarProps> = ({ searchBar = false, searchNavigate = tru
   const [anchorElNav, setAnchorElNav] = React.useState<null | HTMLElement>(null);
   const [anchorElUser, setAnchorElUser] = React.useState<null | HTMLElement>(null);
   const [openFeedback, setOpenFeedback] = React.useState<boolean>(false);
-  const searchTerm = useSelector((state: any) => state.search.searchTerm);
   const searchFilters = useSelector((state: any) => state.search.searchFilters);
   const semanticSearch = useSelector((state: any) => state.search.semanticSearch);
   const id_token = user?.token || '';

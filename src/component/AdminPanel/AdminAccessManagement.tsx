@@ -76,7 +76,7 @@ const AdminAccessManagement = () => {
   const dispatch = useAppDispatch();
   const { showSuccess, showError } = useNotification();
 
-  const { isAdmin, isDataOwner, hasAdminCapabilities, currentUserRole, allAdmins, grantedAccesses } = useAppSelector(
+  const { isDataOwner, hasAdminCapabilities, currentUserRole, allAdmins, grantedAccesses } = useAppSelector(
     (state) => state.admin
   );
 
