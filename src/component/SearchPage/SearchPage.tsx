@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import { Grid, Box } from '@mui/material'
 import { Tune, FilterList } from '@mui/icons-material'
 import { useDispatch, useSelector } from 'react-redux'
@@ -58,10 +58,14 @@ const SearchPage: React.FC<SearchPageProps> = ({ searchResult }) => {
   const searchTerm = useSelector((state: any) => state.search.searchTerm);
   const searchType = useSelector((state: any) => state.search.searchType);
   const semanticSearch = useSelector((state: any) => state.search.semanticSearch);
+  const persistedFilters = useSelector((state: any) => state.search.searchFilters);
+  // Move rawResources selector up so it's available in mount useEffect
+  const rawResources = useSelector((state: any) => state.resources.items);
   const id_token = user?.token || '';
   const [previewData, setPreviewData] = useState<any | null>(null);
-  const [filters, setFilters] = useState<any[]>([]);
-  const [prevFilters, setPrevFilters] = useState<any[]>([]);
+  // Initialize filters from persisted Redux state
+  const [filters, setFilters] = useState<any[]>(persistedFilters || []);
+  const [prevFilters, setPrevFilters] = useState<any[]>(persistedFilters || []);
   const [selectedTypeFilter, setSelectedTypeFilter] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'table'>('list');
   const [isFiltersOpen, setIsFiltersOpen] = useState<boolean>(true);
@@ -73,6 +77,10 @@ const SearchPage: React.FC<SearchPageProps> = ({ searchResult }) => {
   const [selectedDataProducts, setSelectedDataProducts] = useState<string[]>([]);
   const [availableAspects, _setAvailableAspects] = useState<string[]>([]);
 
+  // Track if this is the first render to avoid clearing persisted data
+  const isFirstRender = useRef(true);
+  const prevSearchTerm = useRef(searchTerm);
+
   const handleFilterChange = (selectedFilters: any[]) => {
     setFilters(selectedFilters);
   };
@@ -83,16 +91,17 @@ const SearchPage: React.FC<SearchPageProps> = ({ searchResult }) => {
     setIsFiltersOpen(!isFiltersOpen);
   };
 
+  // On mount: only search if we don't have persisted results
+  // Don't clear data - preserve persisted state for back navigation
   useEffect(() => {
-    setPageSize(20);
-    setPageNumber(1);
-    setStartIndex(0);
-    // Clear previous search results in the store
-    dispatch({ type: 'resources/setItemsPreviousPageRequest', payload: null });
-    dispatch({ type: 'resources/setItemsPageRequest', payload: null });
-    dispatch({ type: 'resources/setItemsStoreData', payload: [] });
-    // Only search if there's a search term and no existing results
-    if (searchTerm && searchTerm.trim() !== '' && resources.length === 0) {
+    // Check if we already have results from persisted state
+    const hasPersistedResults = rawResources && Array.isArray(rawResources) && rawResources.length > 0;
+
+    // Only search if there's a search term and no existing persisted results
+    if (searchTerm && searchTerm.trim() !== '' && !hasPersistedResults) {
+      setPageSize(20);
+      setPageNumber(1);
+      setStartIndex(0);
       dispatch(searchResourcesByTerm({
         term: searchTerm,
         id_token: id_token,
@@ -104,13 +113,22 @@ const SearchPage: React.FC<SearchPageProps> = ({ searchResult }) => {
     }
   }, []);
 
+  // Only clear data when searchTerm actually changes (not on first render)
   useEffect(() => {
-    setStartIndex(0);
-    setPageNumber(1);
-    setPageSize(20);
-    dispatch({ type: 'resources/setItemsPreviousPageRequest', payload: null });
-    dispatch({ type: 'resources/setItemsPageRequest', payload: null });
-    dispatch({ type: 'resources/setItemsStoreData', payload: [] });
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    // Only clear if searchTerm actually changed
+    if (prevSearchTerm.current !== searchTerm) {
+      prevSearchTerm.current = searchTerm;
+      setStartIndex(0);
+      setPageNumber(1);
+      setPageSize(20);
+      dispatch({ type: 'resources/setItemsPreviousPageRequest', payload: null });
+      dispatch({ type: 'resources/setItemsPageRequest', payload: null });
+      dispatch({ type: 'resources/setItemsStoreData', payload: [] });
+    }
   }, [searchTerm]);
 
   useEffect(() => {
@@ -191,8 +209,7 @@ const SearchPage: React.FC<SearchPageProps> = ({ searchResult }) => {
     }
   }, [selectedTypeFilter]);
 
-  // Select data from the Redux store
-  const rawResources = useSelector((state: any) => state.resources.items);
+  // Select data from the Redux store (rawResources moved to top)
   const resourcesStatus = useSelector((state: any) => state.resources.status);
   const error = useSelector((state: any) => state.resources.error);
 
