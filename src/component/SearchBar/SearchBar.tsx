@@ -237,9 +237,13 @@ const SearchBar: React.FC<SearchProps> = ({ handleSearchSubmit, dataSearch, vari
     dispatch({ type: 'search/setSearchTerm', payload: { searchTerm: newInputValue } });
   };
 
-  const handleKeyDown = (event: React.KeyboardEvent) => {
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') {
-      const trimmedValue = searchTerm?.toString().trim() || '';
+      // Get value directly from input element to avoid Redux timing issues
+      const inputElement = event.target as HTMLInputElement;
+      const trimmedValue = inputElement.value?.toString().trim() || '';
+      // Also update Redux to keep it in sync
+      dispatch({ type: 'search/setSearchTerm', payload: { searchTerm: trimmedValue } });
       handleSearchSubmit(trimmedValue);
       if (trimmedValue.length >= 3) {
         addToRecentSearches(trimmedValue);

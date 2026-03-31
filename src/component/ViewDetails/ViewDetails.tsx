@@ -147,7 +147,7 @@ const ViewDetails = () => {
       dispatch(popFromHistory());
     } else {
       // If no history, fall back to browser navigation
-      dispatch({ type: 'resources/setItems', payload: [] });
+      // Don't clear resources - preserve search results for back navigation
       navigate(-1);
     }
   };

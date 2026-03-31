@@ -3361,13 +3361,23 @@ Example output: {"searchTerms":["customer","orders","purchase"],"dataplexQuery":
     // Search across all projects and merge results
     const searchPromises = allProjects.map(async (projId) => {
       try {
+        // Native semantic search doesn't work with filter syntax (type=, system=, etc.)
+        // Only enable it for pure natural language queries
+        const hasFilterSyntax = searchQuery && (
+          searchQuery.includes('type=') || searchQuery.includes('type:(') ||
+          searchQuery.includes('system=') || searchQuery.includes('system:(') ||
+          searchQuery.includes('project:(') || searchQuery.includes('aspect:') ||
+          searchQuery.includes('parent:')
+        );
+        const useNativeSemantic = semanticSearch && !hasFilterSyntax;
+
         const request = {
           name: `projects/${projId}/locations/${location}`,
           query: searchQuery,
           pageSize: semanticSearch ? 50 : (pageSize || 20),
           pageToken: pageToken,
-          // Use native Dataplex semantic search when enabled
-          semanticSearch: semanticSearch || false
+          // Only use native semantic search for pure natural language (no filter syntax)
+          semanticSearch: useNativeSemantic
         };
         const [results] = await client.searchEntries(request);
         console.log(`[SEARCH] Project ${projId}: found ${results ? results.length : 0} results`);
