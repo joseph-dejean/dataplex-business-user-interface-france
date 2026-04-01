@@ -120,6 +120,11 @@ const Navbar: React.FC<NavBarProps> = ({ searchBar = false, searchNavigate = tru
       };
       updateUser(user.token, userData);
     }
+    // Clear search state when going to home
+    dispatch({ type: 'search/setSearchTerm', payload: { searchTerm: '' } });
+    dispatch({ type: 'search/setSearchFilters', payload: { searchFilters: [] } });
+    dispatch({ type: 'resources/setItemsStoreData', payload: [] });
+    dispatch({ type: 'resources/setItems', payload: [] });
     navigate('/home');
   };
 
