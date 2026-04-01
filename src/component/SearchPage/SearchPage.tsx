@@ -80,6 +80,9 @@ const SearchPage: React.FC<SearchPageProps> = ({ searchResult: _searchResult }) 
   // Track if this is the first render to avoid clearing persisted data
   const isFirstRender = useRef(true);
   const prevSearchTerm = useRef(searchTerm);
+  // Use ref to always get current semanticSearch value (avoids stale closures)
+  const semanticSearchRef = useRef(semanticSearch);
+  semanticSearchRef.current = semanticSearch;
 
   const handleFilterChange = (selectedFilters: any[]) => {
     setFilters(selectedFilters);
@@ -109,7 +112,7 @@ const SearchPage: React.FC<SearchPageProps> = ({ searchResult: _searchResult }) 
         id_token: id_token,
         filters: filters,
         aspectFilters: selectedAspects,
-        semanticSearch: semanticSearch,
+        semanticSearch: semanticSearchRef.current,  // Use ref for current value
         userEmail: user?.email
       }));
     }
@@ -155,7 +158,7 @@ const SearchPage: React.FC<SearchPageProps> = ({ searchResult: _searchResult }) 
         id_token: id_token,
         filters: filters,
         aspectFilters: selectedAspects,
-        semanticSearch: semanticSearch,
+        semanticSearch: semanticSearchRef.current,  // Use ref for current value
         userEmail: user?.email
       }));
     }
@@ -182,7 +185,7 @@ const SearchPage: React.FC<SearchPageProps> = ({ searchResult: _searchResult }) 
       id_token: id_token,
       filters: filters,
       aspectFilters: selectedAspects,
-      semanticSearch: semanticSearch,
+      semanticSearch: semanticSearchRef.current,  // Use ref for current value
       userEmail: user?.email
     }));
   }, [selectedAspects]);
@@ -315,7 +318,7 @@ const SearchPage: React.FC<SearchPageProps> = ({ searchResult: _searchResult }) 
             id_token: id_token,
             filters: filters,
             aspectFilters: selectedAspects,
-            semanticSearch: semanticSearch,
+            semanticSearch: semanticSearchRef.current,  // Use ref for current value
             userEmail: user?.email
           }));
         }
