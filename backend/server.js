@@ -3594,13 +3594,17 @@ app.post('/api/v1/search', async (req, res) => {
     // --- FALLBACK TO GEMINI IF NATIVE SEMANTIC SEARCH FAILS ---
     if (semanticSearch && searchResults.length === 0 && query && query !== '*') {
       try {
-        console.log(`[SEARCH] Native semantic search failed (0 results). Attempting Gemini fallback...`);
+        console.log(`[SEARCH] Native semantic search failed (0 results). Attempting Gemini fallback with query: "${query}"`);
+        
+        // Force us-central1 for Gemini Preview/Lite models as they are often only available there first
+        const aiLocation = 'us-central1'; 
+        console.log(`[SEARCH] Initializing Vertex AI in ${aiLocation} with model: gemini-3.1-flash-lite-preview`);
+        
         const vertex_ai = new VertexAI({
           project: PROJECT_ID,
-          location: process.env.GCP_LOCATION || 'europe-west1'
+          location: aiLocation
         });
         
-        // Using the latest gemini-3.1-flash-lite-preview as requested
         const generativeModel = vertex_ai.getGenerativeModel({ model: 'gemini-3.1-flash-lite-preview' });
 
         const aiPrompt = `You are a data catalog search assistant. Given a user's natural language query, extract the key search terms and concepts that would help find relevant database tables or datasets in Dataplex.
@@ -3609,13 +3613,21 @@ User Query: "${query}"
 
 Return a valid JSON object with ONLY ONE field "dataplexQuery" containing a search query string optimized for Dataplex keyword search (using AND, OR, and syntax like "type:TABLE"). Do not return markdown.`;
 
+        console.log(`[SEARCH] Sending request to Gemini...`);
         const aiResult = await generativeModel.generateContent(aiPrompt);
+        
+        if (!aiResult.response || !aiResult.response.candidates || aiResult.response.candidates.length === 0) {
+          throw new Error('No candidates returned from Gemini');
+        }
+
         let aiResponseText = aiResult.response.candidates[0].content.parts[0].text.trim();
+        console.log(`[SEARCH] Gemini RAW response: ${aiResponseText}`);
+
         let cleanJson = aiResponseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
         const searchConfig = JSON.parse(cleanJson);
         
         if (searchConfig.dataplexQuery) {
-          console.log(`[SEARCH] Gemini translated: "${query}" -> "${searchConfig.dataplexQuery}"`);
+          console.log(`[SEARCH] Gemini Success! Translated: "${query}" -> "${searchConfig.dataplexQuery}"`);
           
           const fallbackPromises = allProjects.map(async (projId) => {
             try {
@@ -3627,8 +3639,10 @@ Return a valid JSON object with ONLY ONE field "dataplexQuery" containing a sear
                 semanticSearch: false // Keyword fallback
               };
               const [results] = await client.searchEntries(request);
+              console.log(`[SEARCH] Fallback results for ${projId}: ${results ? results.length : 0}`);
               return results || [];
             } catch (err) {
+              console.warn(`[SEARCH] Fallback search failed for ${projId}:`, err.message);
               return [];
             }
           });
@@ -3645,10 +3659,11 @@ Return a valid JSON object with ONLY ONE field "dataplexQuery" containing a sear
             return true;
           });
           
-          console.log(`[SEARCH] Gemini fallback found ${searchResults.length} results.`);
+          console.log(`[SEARCH] Total Gemini fallback results: ${searchResults.length}`);
         }
       } catch (e) {
-        console.warn('[SEARCH] Gemini fallback failed:', e.message);
+        console.error('[SEARCH] !!! Gemini Fallback CRITICAL FAILURE:', e.message);
+        if (e.stack) console.error(e.stack);
       }
     }
 
