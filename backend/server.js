@@ -3608,30 +3608,40 @@ app.post('/api/v1/search', async (req, res) => {
         
         const generativeModel = vertex_ai.getGenerativeModel({ model: aiModel });
 
-        const aiPrompt = `You are a Dataplex search expert. Translate this natural language query into a keyword search query that will find relevant table assets.
+        const aiPrompt = `You are a Dataplex search expert. Translate this natural language query into a high-precision Dataplex search query.
   
 User Request: "${query}"
+Active Filters to respect: ${JSON.stringify(filters || [])}
 
-Return JSON: {"dataplexQuery": "your optimized query"}`;
+Instructions:
+1. Identify the core intent (e.g., "hr data", "financials").
+2. Incorporate the active filters into the search syntax.
+3. Use Dataplex filters where appropriate (e.g., "type:TABLE", "system:bigquery").
+4. If a specific project or entry group is mentioned in the request, prioritize it.
 
-        console.log(`[SEARCH][GEMINI-FALLBACK] Sending prompt to AI...`);
+Return JSON: {"dataplexQuery": "your optimized query string"}`;
+
+        console.log(`[SEARCH][GEMINI-FALLBACK] Sending prompt with filters to AI...`);
         const aiResult = await generativeModel.generateContent(aiPrompt);
         
         if (aiResult.response && aiResult.response.candidates && aiResult.response.candidates.length > 0) {
           let aiResponseText = aiResult.response.candidates[0].content.parts[0].text.trim();
-          console.log(`[SEARCH][GEMINI-FALLBACK] AI responded with: ${aiResponseText}`);
+          console.log(`[SEARCH][GEMINI-FALLBACK] AI responded: ${aiResponseText}`);
 
           let cleanJson = aiResponseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
           const searchConfig = JSON.parse(cleanJson);
           
           if (searchConfig.dataplexQuery) {
-            console.log(`[SEARCH][GEMINI-FALLBACK] Executing keyword search for: "${searchConfig.dataplexQuery}"`);
+            // Apply technical location/project filters even if AI missed them
+            let finalQuery = searchConfig.dataplexQuery;
+            
+            console.log(`[SEARCH][GEMINI-FALLBACK] Executing final filtered search for: "${finalQuery}"`);
             
             const fallbackPromises = allProjects.map(async (projId) => {
               try {
                 const request = {
                   name: `projects/${projId}/locations/${location}`,
-                  query: searchConfig.dataplexQuery,
+                  query: finalQuery,
                   pageSize: pageSize || 20,
                   pageToken: pageToken,
                   semanticSearch: false 
