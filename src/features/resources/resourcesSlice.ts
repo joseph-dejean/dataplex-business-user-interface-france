@@ -22,9 +22,17 @@ const getAspectName = (name: string) => {
 
 // Thunk for searching resources based on a search term
 export const searchResourcesByTerm = createAsyncThunk('resources/searchResourcesByTerm', async (requestData: any, { rejectWithValue }) => {
-  // If the search term is empty and no filters are present, we are returning an empty list.
+  // If the search term is empty and no filters are present
+  // For semantic search, allow empty query to browse all assets
+  // For regular search, return empty to clear results
   if (!requestData.term && (!requestData.filters || requestData.filters.length === 0) && (!requestData.aspectFilters || requestData.aspectFilters.length === 0)) {
-    return [];
+    if (requestData.semanticSearch) {
+      // Semantic search with empty query - search all with '*'
+      requestData.term = '*';
+    } else {
+      // Regular search with empty query - return empty and clear results
+      return { data: [], requestData: {}, results: { results: [] }, clearResults: true };
+    }
   }
 
   // If the term is not empty, we will perform a search.
@@ -288,6 +296,17 @@ export const resourcesSlice = createSlice({
       })
       .addCase(searchResourcesByTerm.fulfilled, (state, action) => {
         const payload = Array.isArray(action.payload) ? { data: [], requestData: {}, results: {} } : action.payload;
+
+        // Handle clear results flag (empty search without semantic mode)
+        if (payload?.clearResults) {
+          state.items = [];
+          state.itemsStore = [];
+          state.totalItems = 0;
+          state.itemsRequestData = {};
+          state.status = 'succeeded';
+          return;
+        }
+
         state.totalItems = payload?.results?.totalSize ?? 0;
         state.itemsRequestData = payload?.requestData ?? {};
         // Ensure data is always an array before spreading

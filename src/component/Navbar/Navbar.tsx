@@ -205,43 +205,6 @@ const Navbar: React.FC<NavBarProps> = ({ searchBar = false, searchNavigate = tru
             padding: "0.5rem 0rem", // 8px 20px
             gap: 0,
           }}>
-            {/* Left Section - Logo */}
-            <Box onClick={handleLogoClick} sx={{
-              display: { xs: 'none', md: 'flex' },
-              alignItems: 'center',
-              gap: '8px',
-              flex: "0 0 auto",
-              marginLeft: "1rem",
-              cursor: "pointer",
-              minWidth: '200px'
-            }}>
-              <img
-                src="/assets/svg/dataplex-logo-icon.svg"
-                alt="Dataplex"
-                style={{ width: '28px', height: '28px' }}
-              />
-              <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-                <Typography sx={{
-                  fontFamily: '"Google Sans", sans-serif',
-                  fontSize: '16px',
-                  fontWeight: 600,
-                  color: '#0B57D0',
-                  lineHeight: 1.2,
-                }}>
-                  Dataplex
-                </Typography>
-                <Typography sx={{
-                  fontFamily: '"Google Sans", sans-serif',
-                  fontSize: '11px',
-                  fontWeight: 500,
-                  color: '#0B57D0',
-                  lineHeight: 1.2,
-                }}>
-                  Catalog France Practice
-                </Typography>
-              </Box>
-            </Box>
-
             {/* Center Section - Search Bar */}
             {
               searchBar && location.pathname !== '/admin-panel' ?

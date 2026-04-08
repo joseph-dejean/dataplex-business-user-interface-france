@@ -71,7 +71,9 @@ const SearchBar: React.FC<SearchProps> = ({ handleSearchSubmit, dataSearch, vari
   const getStorageKey = (userId: string) => `recentSearches_${userId}`;
 
   const handleSemanticSearchToggle = () => {
-    dispatch({ type: 'search/setSemanticSearch', payload: { semanticSearch: !semanticSearch } });
+    const newValue = !semanticSearch;
+    console.log('[SEMANTIC] Toggle clicked - changing from', semanticSearch, 'to', newValue);
+    dispatch({ type: 'search/setSemanticSearch', payload: { semanticSearch: newValue } });
   };
 
   // Load recent searches from localStorage on component mount

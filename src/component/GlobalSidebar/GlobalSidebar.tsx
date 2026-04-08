@@ -58,7 +58,7 @@ const GlobalSidebar: React.FC<GlobalSidebarProps> = ({ isHomePage = false }) => 
           />
           <div className="sidebar-logo-text">
             <span className="sidebar-logo-title">Dataplex</span>
-            <span className="sidebar-practice-label">Catalog France Practice</span>
+            <span className="sidebar-practice-label">Catalog</span>
           </div>
         </div>
       )}

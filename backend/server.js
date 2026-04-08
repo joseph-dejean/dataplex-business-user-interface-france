@@ -1994,6 +1994,251 @@ app.get('/api/v1/aspect-types', async (req, res) => {
 });
 
 /**
+ * POST /api/v1/get-insights
+ * Get insights for a table using Dataplex aspects + BigQuery metadata
+ * No Vertex AI - uses native GCP APIs only
+ */
+app.post('/api/v1/get-insights', async (req, res) => {
+  try {
+    const { entryName, fullyQualifiedName } = req.body;
+    console.log('[INSIGHTS] Request for:', entryName || fullyQualifiedName);
+
+    const insights = {
+      tableMetadata: null,
+      description: null,
+      suggestedQueries: [],
+      dataProfile: null,
+      dataQuality: null,
+      aspects: {},
+      source: []
+    };
+
+    // 1. Get BigQuery table metadata if we have FQN
+    if (fullyQualifiedName) {
+      let projectId, datasetId, tableId;
+      let fqn = fullyQualifiedName;
+
+      // Parse FQN (bigquery:project.dataset.table or project.dataset.table)
+      if (fqn.startsWith('bigquery:')) {
+        fqn = fqn.substring(9);
+      } else if (fqn.startsWith('bigquery://')) {
+        fqn = fqn.replace('bigquery://', '');
+      }
+
+      const parts = fqn.split('.');
+      if (parts.length >= 3) {
+        projectId = parts[0];
+        datasetId = parts[1];
+        tableId = parts[2];
+
+        console.log(`[INSIGHTS] Fetching BigQuery metadata for ${projectId}.${datasetId}.${tableId}`);
+
+        try {
+          const bigquery = new BigQuery({ projectId });
+          const [metadata] = await bigquery.dataset(datasetId).table(tableId).getMetadata();
+
+          // Get table description
+          insights.description = metadata.description || null;
+
+          insights.tableMetadata = {
+            numRows: metadata.numRows ? parseInt(metadata.numRows) : null,
+            numBytes: metadata.numBytes ? parseInt(metadata.numBytes) : null,
+            numBytesFormatted: metadata.numBytes ? formatBytes(parseInt(metadata.numBytes)) : 'Unknown',
+            creationTime: metadata.creationTime ? new Date(parseInt(metadata.creationTime)).toISOString() : null,
+            lastModifiedTime: metadata.lastModifiedTime ? new Date(parseInt(metadata.lastModifiedTime)).toISOString() : null,
+            location: metadata.location,
+            tableType: metadata.type,
+            numColumns: metadata.schema?.fields?.length || 0,
+            partitioning: metadata.timePartitioning ? {
+              type: metadata.timePartitioning.type,
+              field: metadata.timePartitioning.field
+            } : null,
+            clustering: metadata.clustering?.fields || null
+          };
+
+          // Generate suggested queries based on schema
+          const schema = metadata.schema?.fields || [];
+          const fullTableName = `\`${projectId}.${datasetId}.${tableId}\``;
+
+          // Basic SELECT query
+          insights.suggestedQueries.push({
+            title: 'Preview data',
+            description: 'View first 100 rows',
+            query: `SELECT *\nFROM ${fullTableName}\nLIMIT 100`
+          });
+
+          // Count query
+          insights.suggestedQueries.push({
+            title: 'Count rows',
+            description: 'Get total row count',
+            query: `SELECT COUNT(*) as total_rows\nFROM ${fullTableName}`
+          });
+
+          // If there's a timestamp/date column, suggest time-based query
+          const dateColumns = schema.filter(f =>
+            ['TIMESTAMP', 'DATE', 'DATETIME'].includes(f.type?.toUpperCase()) ||
+            f.name?.toLowerCase().includes('date') ||
+            f.name?.toLowerCase().includes('time') ||
+            f.name?.toLowerCase().includes('created') ||
+            f.name?.toLowerCase().includes('updated')
+          );
+          if (dateColumns.length > 0) {
+            const dateCol = dateColumns[0].name;
+            insights.suggestedQueries.push({
+              title: 'Recent records',
+              description: `Get records from last 7 days by ${dateCol}`,
+              query: `SELECT *\nFROM ${fullTableName}\nWHERE ${dateCol} >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)\nORDER BY ${dateCol} DESC\nLIMIT 100`
+            });
+          }
+
+          // If there are numeric columns, suggest aggregation
+          const numericColumns = schema.filter(f =>
+            ['INT64', 'FLOAT64', 'NUMERIC', 'BIGNUMERIC', 'INTEGER', 'FLOAT'].includes(f.type?.toUpperCase())
+          );
+          if (numericColumns.length > 0) {
+            const numCol = numericColumns[0].name;
+            insights.suggestedQueries.push({
+              title: 'Basic statistics',
+              description: `Get min, max, avg for ${numCol}`,
+              query: `SELECT\n  MIN(${numCol}) as min_value,\n  MAX(${numCol}) as max_value,\n  AVG(${numCol}) as avg_value,\n  COUNT(*) as total_count\nFROM ${fullTableName}`
+            });
+          }
+
+          // If there are string columns that look like categories, suggest GROUP BY
+          const categoryColumns = schema.filter(f =>
+            f.type?.toUpperCase() === 'STRING' && (
+              f.name?.toLowerCase().includes('type') ||
+              f.name?.toLowerCase().includes('status') ||
+              f.name?.toLowerCase().includes('category') ||
+              f.name?.toLowerCase().includes('country') ||
+              f.name?.toLowerCase().includes('region') ||
+              f.name?.toLowerCase().includes('state') ||
+              f.name?.toLowerCase().includes('gender')
+            )
+          );
+          if (categoryColumns.length > 0) {
+            const catCol = categoryColumns[0].name;
+            insights.suggestedQueries.push({
+              title: 'Distribution',
+              description: `Count by ${catCol}`,
+              query: `SELECT ${catCol}, COUNT(*) as count\nFROM ${fullTableName}\nGROUP BY ${catCol}\nORDER BY count DESC\nLIMIT 20`
+            });
+          }
+
+          insights.source.push('BigQuery');
+          console.log('[INSIGHTS] BigQuery metadata retrieved successfully');
+        } catch (bqError) {
+          console.warn('[INSIGHTS] BigQuery metadata fetch failed:', bqError.message);
+        }
+      }
+    }
+
+    // 2. Get Dataplex entry aspects (may contain profile/quality data)
+    if (entryName) {
+      try {
+        const catalogClient = new CatalogServiceClient();
+        const [entry] = await catalogClient.getEntry({
+          name: entryName,
+          view: 'FULL'
+        });
+
+        if (entry.aspects) {
+          // Look for data profile aspects
+          for (const [key, value] of Object.entries(entry.aspects)) {
+            const keyLower = key.toLowerCase();
+            if (keyLower.includes('profile') || keyLower.includes('quality') ||
+                keyLower.includes('statistics') || keyLower.includes('schema')) {
+              insights.aspects[key] = value.data || value;
+            }
+          }
+
+          // Extract specific well-known aspects
+          const schemaAspect = entry.aspects['bigquery.googleapis.com/Table.global.schema'];
+          if (schemaAspect?.data?.fields) {
+            insights.schema = schemaAspect.data.fields;
+          }
+
+          const overviewAspect = entry.aspects['bigquery.googleapis.com/Table.global.overview'];
+          if (overviewAspect?.data) {
+            insights.overview = overviewAspect.data;
+          }
+
+          if (Object.keys(insights.aspects).length > 0) {
+            insights.source.push('Dataplex Aspects');
+          }
+        }
+        console.log('[INSIGHTS] Dataplex aspects retrieved');
+      } catch (dpError) {
+        console.warn('[INSIGHTS] Dataplex entry fetch failed:', dpError.message);
+      }
+    }
+
+    // 3. Try to find DataScans for this table (profile/quality scans)
+    if (fullyQualifiedName) {
+      try {
+        const dataScanClient = new DataScanServiceClient();
+        const location = process.env.GCP_LOCATION || 'europe-west1';
+
+        // List DataScans in the project
+        const [scans] = await dataScanClient.listDataScans({
+          parent: `projects/${PROJECT_ID}/locations/${location}`
+        });
+
+        // Find scans that match this table
+        for (const scan of scans || []) {
+          const scanResource = scan.data?.resource;
+          if (scanResource && fullyQualifiedName.includes(scanResource.split('/').pop())) {
+            // Get full scan with results
+            const [fullScan] = await dataScanClient.getDataScan({
+              name: scan.name,
+              view: 'FULL'
+            });
+
+            if (fullScan.dataProfileResult) {
+              insights.dataProfile = {
+                rowCount: fullScan.dataProfileResult.rowCount,
+                scannedData: fullScan.dataProfileResult.scannedData,
+                profile: fullScan.dataProfileResult.profile
+              };
+              insights.source.push('Dataplex Data Profile');
+            }
+
+            if (fullScan.dataQualityResult) {
+              insights.dataQuality = {
+                passed: fullScan.dataQualityResult.passed,
+                score: fullScan.dataQualityResult.score,
+                dimensions: fullScan.dataQualityResult.dimensions,
+                rules: fullScan.dataQualityResult.rules?.slice(0, 10) // Limit to 10 rules
+              };
+              insights.source.push('Dataplex Data Quality');
+            }
+            break; // Found matching scan
+          }
+        }
+      } catch (scanError) {
+        console.warn('[INSIGHTS] DataScan fetch failed:', scanError.message);
+      }
+    }
+
+    console.log(`[INSIGHTS] Returning insights from sources: ${insights.source.join(', ') || 'none'}`);
+    res.json(insights);
+
+  } catch (error) {
+    console.error('[INSIGHTS] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Helper function to format bytes
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+/**
  * GET /api/entry-list
  * A protected endpoint to list all available Aspect Types in a given location.
  * The user must be authenticated.
@@ -3306,57 +3551,10 @@ app.post('/api/v1/search', async (req, res) => {
 
     console.log(`[SEARCH] Searching across ${allProjects.length} projects: ${allProjects.join(', ')}, Location: ${location}`);
 
-    let searchQuery = query || '*';
-    let intent = '';
-    let searchTerms = [];
+    // Use query directly - Dataplex handles semantic search natively when semanticSearch=true
+    const searchQuery = query || '*';
 
-    // --- AI SEMANTIC SEARCH TRANSLATION ---
-    if (semanticSearch && query && query.trim().length >= 2) {
-      try {
-        const vertex_ai = new VertexAI({
-          project: PROJECT_ID,
-          location: process.env.GCP_LOCATION || 'europe-west1'
-        });
-        const generativeModel = vertex_ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
-
-        const aiPrompt = `You are a data catalog search assistant. Given a user's natural language query, extract the key search terms and concepts that would help find relevant database tables or datasets.
-
-User Query: "${query}"
-
-Analyze the query and return a JSON object with:
-1. "searchTerms": array of individual keywords to search for (lowercase, no special characters)
-2. "dataplexQuery": a search query string optimized for Dataplex/Data Catalog search
-3. "intent": what the user is looking for (e.g., "customer data", "sales metrics", "order history")
-4. "suggestedFilters": any filters to apply (e.g., entryType, system)
-
-Return ONLY valid JSON, no markdown or explanations.
-Example output: {"searchTerms":["customer","orders","purchase"],"dataplexQuery":"customer orders purchase","intent":"customer order data","suggestedFilters":{}}`;
-
-        const aiResult = await generativeModel.generateContent(aiPrompt);
-        const aiResponseText = aiResult.response.candidates[0].content.parts[0].text.trim();
-
-        let searchConfig;
-        try {
-          let cleanJson = aiResponseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-          searchConfig = JSON.parse(cleanJson);
-        } catch (parseError) {
-          console.error('[SEARCH] AI response parse error:', parseError);
-          searchConfig = {
-            searchTerms: query.toLowerCase().split(/\s+/).filter(t => t.length > 2),
-            dataplexQuery: query,
-            intent: query,
-            suggestedFilters: {}
-          };
-        }
-
-        console.log('[SEARCH] AI Search Config:', searchConfig);
-        searchQuery = searchConfig.dataplexQuery || query;
-        intent = searchConfig.intent || '';
-        searchTerms = searchConfig.searchTerms || [];
-      } catch (aiError) {
-        console.error('[SEARCH] Vertex AI semantic search translation error:', aiError);
-      }
-    }
+    console.log(`[SEARCH] Using Dataplex native search with semanticSearch=${semanticSearch ? 'true' : 'false'}`);
 
     // Search across all projects and merge results
     const searchPromises = allProjects.map(async (projId) => {
@@ -3364,10 +3562,12 @@ Example output: {"searchTerms":["customer","orders","purchase"],"dataplexQuery":
         const request = {
           name: `projects/${projId}/locations/${location}`,
           query: searchQuery,
-          pageSize: semanticSearch ? 50 : (pageSize || 20),
-          pageToken: pageToken
-          // Semantic search is handled by Gemini AI translation above, not native Dataplex
+          pageSize: pageSize || 20,
+          pageToken: pageToken,
+          // Use Dataplex native semantic search - no external AI translation needed
+          semanticSearch: semanticSearch || false
         };
+        console.log(`[SEARCH] Calling Dataplex for ${projId} with semanticSearch=${request.semanticSearch}`);
         const [results] = await client.searchEntries(request);
         console.log(`[SEARCH] Project ${projId}: found ${results ? results.length : 0} results`);
         return results || [];
@@ -3391,46 +3591,8 @@ Example output: {"searchTerms":["customer","orders","purchase"],"dataplexQuery":
 
     console.log(`[SEARCH] Total unique results from all projects: ${searchResults.length}`);
 
-    // --- AI RANKING LOGIC ---
-    if (semanticSearch && searchResults && searchResults.length > 0 && intent) {
-      try {
-        const vertex_ai = new VertexAI({
-          project: PROJECT_ID,
-          location: process.env.GCP_LOCATION || 'europe-west1'
-        });
-        const generativeModel = vertex_ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
-
-        const rankPrompt = `Given the user's search intent: "${intent}"
-
-Rank these data entries by relevance (most relevant first). Return a JSON array of indices in order of relevance.
-
-Entries:
-${searchResults.slice(0, 15).map((r, i) => {
-          const entry = r.dataplexEntry || r;
-          return `${i}. Name: ${entry.entrySource?.displayName || entry.name?.split('/').pop() || 'Unknown'}
- Description: ${entry.entrySource?.description || 'No description'}
- Type: ${entry.entryType || 'Unknown'}`;
-        }).join('\n')}
-
-Return ONLY a JSON array of indices like [2,0,5,1,3,4,...], no explanation.`;
-
-        const rankResult = await generativeModel.generateContent(rankPrompt);
-        const rankText = rankResult.response.candidates[0].content.parts[0].text.trim();
-        const cleanRankJson = rankText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-        const rankedIndices = JSON.parse(cleanRankJson);
-
-        if (Array.isArray(rankedIndices)) {
-          const rankedResults = rankedIndices
-            .filter(i => i >= 0 && i < searchResults.length)
-            .map(i => searchResults[i]);
-          const unrankedResults = searchResults.filter((_, i) => !rankedIndices.includes(i));
-          searchResults = [...rankedResults, ...unrankedResults];
-        }
-      } catch (rankError) {
-        console.log('[SEARCH] Ranking failed, using original order:', rankError.message);
-      }
-    }
-
+    // Dataplex native semantic search already returns results ordered by relevance
+    // No additional AI ranking needed - this was causing slow performance
 
     // Helper for data normalization (used in all access paths) - as requested
     const normalizeEntry = (entry, hasAccess) => {

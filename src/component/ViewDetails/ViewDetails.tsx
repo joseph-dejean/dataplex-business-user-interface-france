@@ -34,6 +34,7 @@ import GlossariesLinkedAssets from '../Glossaries/GlossariesLinkedAssets';
 import GlossariesSynonyms from '../Glossaries/GlossariesSynonyms';
 import GlossariesSynonymsSkeleton from '../Glossaries/GlossariesSynonymsSkeleton';
 import ResourcePreview from '../Common/ResourcePreview';
+import InsightsPanel from '../Insights/InsightsPanel';
 
 /**
  * @file ViewDetails.tsx
@@ -307,7 +308,21 @@ const ViewDetails = () => {
     setExpandedItems={setExpandedAnnotations}
 
   />;
-  let overviewTab = <DetailPageOverview entry={displayEntry} css={{ width: "100%" }} sampleTableData={sampleTableData} onTableClick={handleTableClick} />;
+  // Show InsightsPanel for BigQuery tables, then DetailPageOverview
+  const isBigQueryTable = getEntryType(displayEntry.name, '/', displayEntry.entryType) === 'Tables' &&
+                          displayEntry.entrySource?.system?.toLowerCase() === 'bigquery';
+
+  let overviewTab = (
+    <>
+      {isBigQueryTable && (
+        <InsightsPanel
+          entryName={displayEntry.name}
+          fullyQualifiedName={displayEntry.fullyQualifiedName}
+        />
+      )}
+      <DetailPageOverview entry={displayEntry} css={{ width: "100%" }} sampleTableData={sampleTableData} onTableClick={handleTableClick} />
+    </>
+  );
 
   //   useEffect(() => {
   //     if(getEntryType(entry.name, '/') == 'Tables') {
