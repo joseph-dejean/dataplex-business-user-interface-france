@@ -84,6 +84,7 @@ const SearchPage: React.FC<SearchPageProps> = ({ searchResult: _searchResult }) 
   // Track if this is the first render to avoid clearing persisted data
   const isFirstRender = useRef(true);
   const prevSearchTerm = useRef(searchTerm);
+
   // Use ref to always get current semanticSearch value (avoids stale closures)
   const semanticSearchRef = useRef(semanticSearch);
   semanticSearchRef.current = semanticSearch;

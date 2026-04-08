@@ -3594,18 +3594,16 @@ app.post('/api/v1/search', async (req, res) => {
     // --- FALLBACK TO GEMINI IF NATIVE SEMANTIC SEARCH FAILS ---
     if (semanticSearch && searchResults.length === 0 && query && query !== '*') {
       try {
-        console.log(`[SEARCH] Native semantic search failed (0 results). Attempting Gemini fallback with query: "${query}"`);
+        console.log(`[SEARCH] Native semantic search failed. Attempting Gemini 2.0 Flash Lite fallback...`);
         
-        // Force us-central1 for Gemini Preview/Lite models as they are often only available there first
-        const aiLocation = 'us-central1'; 
-        console.log(`[SEARCH] Initializing Vertex AI in ${aiLocation} with model: gemini-3.1-flash-lite-preview`);
-        
+        // Use us-central1 for the latest Flash Lite models
+        const aiLocation = 'us-central1';
         const vertex_ai = new VertexAI({
           project: PROJECT_ID,
           location: aiLocation
         });
         
-        const generativeModel = vertex_ai.getGenerativeModel({ model: 'gemini-3.1-flash-lite-preview' });
+        const generativeModel = vertex_ai.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
 
         const aiPrompt = `You are a data catalog search assistant. Given a user's natural language query, extract the key search terms and concepts that would help find relevant database tables or datasets in Dataplex.
   
@@ -3613,57 +3611,49 @@ User Query: "${query}"
 
 Return a valid JSON object with ONLY ONE field "dataplexQuery" containing a search query string optimized for Dataplex keyword search (using AND, OR, and syntax like "type:TABLE"). Do not return markdown.`;
 
-        console.log(`[SEARCH] Sending request to Gemini...`);
         const aiResult = await generativeModel.generateContent(aiPrompt);
         
-        if (!aiResult.response || !aiResult.response.candidates || aiResult.response.candidates.length === 0) {
-          throw new Error('No candidates returned from Gemini');
-        }
-
-        let aiResponseText = aiResult.response.candidates[0].content.parts[0].text.trim();
-        console.log(`[SEARCH] Gemini RAW response: ${aiResponseText}`);
-
-        let cleanJson = aiResponseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-        const searchConfig = JSON.parse(cleanJson);
-        
-        if (searchConfig.dataplexQuery) {
-          console.log(`[SEARCH] Gemini Success! Translated: "${query}" -> "${searchConfig.dataplexQuery}"`);
+        if (aiResult.response && aiResult.response.candidates && aiResult.response.candidates.length > 0) {
+          let aiResponseText = aiResult.response.candidates[0].content.parts[0].text.trim();
+          let cleanJson = aiResponseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+          const searchConfig = JSON.parse(cleanJson);
           
-          const fallbackPromises = allProjects.map(async (projId) => {
-            try {
-              const request = {
-                name: `projects/${projId}/locations/${location}`,
-                query: searchConfig.dataplexQuery,
-                pageSize: pageSize || 20,
-                pageToken: pageToken,
-                semanticSearch: false // Keyword fallback
-              };
-              const [results] = await client.searchEntries(request);
-              console.log(`[SEARCH] Fallback results for ${projId}: ${results ? results.length : 0}`);
-              return results || [];
-            } catch (err) {
-              console.warn(`[SEARCH] Fallback search failed for ${projId}:`, err.message);
-              return [];
-            }
-          });
-          
-          const fallbackResultsArr = await Promise.all(fallbackPromises);
-          let fallbackResults = fallbackResultsArr.flat();
-          
-          // Deduplicate
-          const fbSeen = new Set();
-          searchResults = fallbackResults.filter(entry => {
-            const name = entry?.dataplexEntry?.name || entry?.name;
-            if (!name || fbSeen.has(name)) return false;
-            fbSeen.add(name);
-            return true;
-          });
-          
-          console.log(`[SEARCH] Total Gemini fallback results: ${searchResults.length}`);
+          if (searchConfig.dataplexQuery) {
+            console.log(`[SEARCH] Gemini translated: "${query}" -> "${searchConfig.dataplexQuery}"`);
+            
+            const fallbackPromises = allProjects.map(async (projId) => {
+              try {
+                const request = {
+                  name: `projects/${projId}/locations/${location}`,
+                  query: searchConfig.dataplexQuery,
+                  pageSize: pageSize || 20,
+                  pageToken: pageToken,
+                  semanticSearch: false 
+                };
+                const [results] = await client.searchEntries(request);
+                return results || [];
+              } catch (err) {
+                return [];
+              }
+            });
+            
+            const fallbackResultsArr = await Promise.all(fallbackPromises);
+            let fallbackResults = fallbackResultsArr.flat();
+            
+            // Deduplicate
+            const fbSeen = new Set();
+            searchResults = fallbackResults.filter(entry => {
+              const name = entry?.dataplexEntry?.name || entry?.name;
+              if (!name || fbSeen.has(name)) return false;
+              fbSeen.add(name);
+              return true;
+            });
+            
+            console.log(`[SEARCH] Gemini fallback found ${searchResults.length} results.`);
+          }
         }
       } catch (e) {
-        console.error('[SEARCH] !!! Gemini Fallback CRITICAL FAILURE:', e.message);
-        if (e.stack) console.error(e.stack);
+        console.warn('[SEARCH] Gemini fallback failed:', e.message);
       }
     }
 
