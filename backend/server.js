@@ -3603,7 +3603,7 @@ app.post('/api/v1/search', async (req, res) => {
           location: aiLocation
         });
         
-        const generativeModel = vertex_ai.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
+        const generativeModel = vertex_ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
         const aiPrompt = `You are a data catalog search assistant. Given a user's natural language query, extract the key search terms and concepts that would help find relevant database tables or datasets in Dataplex.
   

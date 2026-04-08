@@ -97,8 +97,16 @@ const SearchBar: React.FC<SearchProps> = ({ handleSearchSubmit, dataSearch, vari
   useEffect(() => {
     if (location.pathname === '/home') {
       dispatch({ type: 'search/setSearchTerm', payload: { searchTerm: '' } });
+      setLocalInputValue('');
     }
   }, [location.pathname, dispatch]);
+
+  // Sync local input when Redux searchTerm changes (History support)
+  useEffect(() => {
+    if (searchTerm !== localInputValue) {
+      setLocalInputValue(searchTerm || '');
+    }
+  }, [searchTerm]);
 
   // Save recent searches to localStorage whenever they change
   useEffect(() => {
@@ -235,8 +243,10 @@ const SearchBar: React.FC<SearchProps> = ({ handleSearchSubmit, dataSearch, vari
     setIsDropdownOpen(false);
   };
 
+  const [localInputValue, setLocalInputValue] = useState(searchTerm || '');
+
   const handleInputChange = (_event: React.SyntheticEvent, newInputValue: string) => {
-    dispatch({ type: 'search/setSearchTerm', payload: { searchTerm: newInputValue } });
+    setLocalInputValue(newInputValue);
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -331,17 +341,17 @@ const SearchBar: React.FC<SearchProps> = ({ handleSearchSubmit, dataSearch, vari
       <Autocomplete
         freeSolo
         disablePortal
-        inputValue={searchTerm || ''}
+        inputValue={localInputValue}
         disableClearable
         onInputChange={handleInputChange}
-        open={isDropdownOpen && ((searchTerm && searchTerm.length >= 3) || recentSearches.length > 0)}
+        open={isDropdownOpen && ((localInputValue && localInputValue.length >= 3) || recentSearches.length > 0)}
         onOpen={() => {
           // Clear any pending blur timeout when opening
           if (blurTimeoutId) {
             clearTimeout(blurTimeoutId);
             setBlurTimeoutId(null);
           }
-          const shouldOpen = (searchTerm && searchTerm.length >= 3) || recentSearches.length > 0;
+          const shouldOpen = (localInputValue && localInputValue.length >= 3) || recentSearches.length > 0;
           if (shouldOpen) {
             setIsDropdownOpen(true);
           }
@@ -349,11 +359,11 @@ const SearchBar: React.FC<SearchProps> = ({ handleSearchSubmit, dataSearch, vari
         onClose={() => {
           setIsDropdownOpen(false);
         }}
-        options={searchTerm ? searchData.map((option) => option.name) : recentSearches.map(search => search.term)}
+        options={localInputValue ? searchData.map((option) => option.name) : recentSearches.map(search => search.term)}
         renderOption={(props, option) => {
           const { key, ...otherProps } = props;
 
-          if (!searchTerm) {
+          if (!localInputValue) {
             // Render recent search item
             const searchItem = recentSearches.find(search => search.term === option);
             if (searchItem) {
