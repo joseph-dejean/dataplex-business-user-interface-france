@@ -3608,20 +3608,20 @@ app.post('/api/v1/search', async (req, res) => {
         
         const generativeModel = vertex_ai.getGenerativeModel({ model: aiModel });
 
-        const aiPrompt = `You are a Dataplex search expert. Translate this natural language query into a high-precision Dataplex search query.
+        const aiPrompt = `You are a Dataplex search expert. Translate this natural language query into an optimized Dataplex keyword search query.
   
 User Request: "${query}"
-Active Filters to respect: ${JSON.stringify(filters || [])}
 
 Instructions:
-1. Identify the core intent (e.g., "hr data", "financials").
-2. Incorporate the active filters into the search syntax.
+1. TRANSLATION: If the user request is in a non-English language (e.g., French like "utilisateurs" or "commande"), translate the concepts to common English technical terms (e.g., "users", "orders", "sales"). Database schemas and metadata are usually in English.
+2. EXPANSION: Expand abstract terms to likely table or column names using OR operations (e.g., "(users OR accounts)", "(orders OR invoices OR sales)").
 3. Use Dataplex filters where appropriate (e.g., "type:TABLE", "system:bigquery").
-4. If a specific project or entry group is mentioned in the request, prioritize it.
+4. Maximize the chance of finding results by keeping the base query broad but technically relevant.
 
 Return JSON: {"dataplexQuery": "your optimized query string"}`;
 
-        console.log(`[SEARCH][GEMINI-FALLBACK] Sending prompt with filters to AI...`);
+
+        console.log(`[SEARCH][GEMINI-FALLBACK] Sending prompt to AI...`);
         const aiResult = await generativeModel.generateContent(aiPrompt);
         
         if (aiResult.response && aiResult.response.candidates && aiResult.response.candidates.length > 0) {
@@ -3632,16 +3632,13 @@ Return JSON: {"dataplexQuery": "your optimized query string"}`;
           const searchConfig = JSON.parse(cleanJson);
           
           if (searchConfig.dataplexQuery) {
-            // Apply technical location/project filters even if AI missed them
-            let finalQuery = searchConfig.dataplexQuery;
-            
-            console.log(`[SEARCH][GEMINI-FALLBACK] Executing final filtered search for: "${finalQuery}"`);
+            console.log(`[SEARCH][GEMINI-FALLBACK] Executing keyword search for: "${searchConfig.dataplexQuery}"`);
             
             const fallbackPromises = allProjects.map(async (projId) => {
               try {
                 const request = {
                   name: `projects/${projId}/locations/${location}`,
-                  query: finalQuery,
+                  query: searchConfig.dataplexQuery,
                   pageSize: pageSize || 20,
                   pageToken: pageToken,
                   semanticSearch: false 
