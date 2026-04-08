@@ -177,7 +177,9 @@ const Navbar: React.FC<NavBarProps> = ({ searchBar = false, searchNavigate = tru
   const handleNavSearch = (text: string) => {
     dispatch({ type: 'resources/setItemsStoreData', payload: [] });
     dispatch(searchResourcesByTerm({ term: text, id_token: id_token, filters: searchFilters, semanticSearch: semanticSearch, userEmail: user?.email }));
-    searchNavigate && navigate('/search');
+    if (searchNavigate) {
+      navigate(`/search?q=${encodeURIComponent(text)}`);
+    }
   }
 
   return (

@@ -112,9 +112,8 @@ const Home = () => {
     dispatch({ type: 'resources/setItemsPageRequest', payload: null });
     dispatch({ type: 'resources/setItemsStoreData', payload: [] });
     dispatch({ type: 'resources/setItems', payload: [] });
-    // Dispatch the setSearchTerm action with the new value
-    navigate('/search');
-
+    // Navigate with query parameter for history support
+    navigate(`/search?q=${encodeURIComponent(text)}`);
   };
 
   return (

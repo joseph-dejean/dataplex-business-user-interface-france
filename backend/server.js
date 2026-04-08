@@ -3591,6 +3591,68 @@ app.post('/api/v1/search', async (req, res) => {
 
     console.log(`[SEARCH] Total unique results from all projects: ${searchResults.length}`);
 
+    // --- FALLBACK TO GEMINI IF NATIVE SEMANTIC SEARCH FAILS ---
+    if (semanticSearch && searchResults.length === 0 && query && query !== '*') {
+      try {
+        console.log(`[SEARCH] Native semantic search failed (0 results). Attempting Gemini fallback...`);
+        const vertex_ai = new VertexAI({
+          project: PROJECT_ID,
+          location: process.env.GCP_LOCATION || 'europe-west1'
+        });
+        
+        // Using the latest gemini-3.1-flash-lite-preview as requested
+        const generativeModel = vertex_ai.getGenerativeModel({ model: 'gemini-3.1-flash-lite-preview' });
+
+        const aiPrompt = `You are a data catalog search assistant. Given a user's natural language query, extract the key search terms and concepts that would help find relevant database tables or datasets in Dataplex.
+  
+User Query: "${query}"
+
+Return a valid JSON object with ONLY ONE field "dataplexQuery" containing a search query string optimized for Dataplex keyword search (using AND, OR, and syntax like "type:TABLE"). Do not return markdown.`;
+
+        const aiResult = await generativeModel.generateContent(aiPrompt);
+        let aiResponseText = aiResult.response.candidates[0].content.parts[0].text.trim();
+        let cleanJson = aiResponseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+        const searchConfig = JSON.parse(cleanJson);
+        
+        if (searchConfig.dataplexQuery) {
+          console.log(`[SEARCH] Gemini translated: "${query}" -> "${searchConfig.dataplexQuery}"`);
+          
+          const fallbackPromises = allProjects.map(async (projId) => {
+            try {
+              const request = {
+                name: `projects/${projId}/locations/${location}`,
+                query: searchConfig.dataplexQuery,
+                pageSize: pageSize || 20,
+                pageToken: pageToken,
+                semanticSearch: false // Keyword fallback
+              };
+              const [results] = await client.searchEntries(request);
+              return results || [];
+            } catch (err) {
+              return [];
+            }
+          });
+          
+          const fallbackResultsArr = await Promise.all(fallbackPromises);
+          let fallbackResults = fallbackResultsArr.flat();
+          
+          // Deduplicate
+          const fbSeen = new Set();
+          searchResults = fallbackResults.filter(entry => {
+            const name = entry?.dataplexEntry?.name || entry?.name;
+            if (!name || fbSeen.has(name)) return false;
+            fbSeen.add(name);
+            return true;
+          });
+          
+          console.log(`[SEARCH] Gemini fallback found ${searchResults.length} results.`);
+        }
+      } catch (e) {
+        console.warn('[SEARCH] Gemini fallback failed:', e.message);
+      }
+    }
+
+
     // Dataplex native semantic search already returns results ordered by relevance
     // No additional AI ranking needed - this was causing slow performance
 

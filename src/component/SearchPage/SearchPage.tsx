@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react'
 import { Grid, Box } from '@mui/material'
 import { Tune, FilterList } from '@mui/icons-material'
 import { useDispatch, useSelector } from 'react-redux'
+import { useSearchParams } from 'react-router-dom'
 import FilterDropdown from '../Filter/FilterDropDown'
 import type { AppDispatch } from '../../app/store'
 import { searchResourcesByTerm } from '../../features/resources/resourcesSlice'
@@ -77,6 +78,9 @@ const SearchPage: React.FC<SearchPageProps> = ({ searchResult: _searchResult }) 
   const [selectedDataProducts, setSelectedDataProducts] = useState<string[]>([]);
   const [availableAspects, _setAvailableAspects] = useState<string[]>([]);
 
+  const [searchParams] = useSearchParams();
+  const queryFromUrl = searchParams.get('q') || '';
+
   // Track if this is the first render to avoid clearing persisted data
   const isFirstRender = useRef(true);
   const prevSearchTerm = useRef(searchTerm);
@@ -96,43 +100,51 @@ const SearchPage: React.FC<SearchPageProps> = ({ searchResult: _searchResult }) 
     setIsFiltersOpen(!isFiltersOpen);
   };
 
-  // On mount: only search if we don't have persisted results
-  // Don't clear data - preserve persisted state for back navigation
+  // 1. Sync URL -> Redux (on URL change or mount)
   useEffect(() => {
-    // Check if we already have results from persisted state
-    const hasPersistedResults = rawResources && Array.isArray(rawResources) && rawResources.length > 0;
-
-    // Only search if there's a search term and no existing persisted results
-    if (searchTerm && searchTerm.trim() !== '' && !hasPersistedResults) {
-      setPageSize(20);
-      setPageNumber(1);
-      setStartIndex(0);
-      dispatch(searchResourcesByTerm({
-        term: searchTerm,
-        id_token: id_token,
-        filters: filters,
-        aspectFilters: selectedAspects,
-        semanticSearch: semanticSearchRef.current,  // Use ref for current value
-        userEmail: user?.email
-      }));
+    if (queryFromUrl && queryFromUrl !== searchTerm) {
+      console.log("[HISTORY] URL changed, updating Redux term:", queryFromUrl);
+      dispatch({ type: 'search/setSearchTerm', payload: { searchTerm: queryFromUrl } });
     }
-  }, []);
+  }, [queryFromUrl]);
 
-  // Only clear data when searchTerm actually changes (not on first render)
+  // 2. Main Search Trigger (on mount or when searchTerm changes)
   useEffect(() => {
-    if (isFirstRender.current) {
-      isFirstRender.current = false;
-      return;
-    }
-    // Only clear if searchTerm actually changed
-    if (prevSearchTerm.current !== searchTerm) {
+    // Determine if we need to search
+    const isNewTerm = searchTerm && searchTerm.trim() !== '' && searchTerm !== prevSearchTerm.current;
+    const hasNoResults = !rawResources || !Array.isArray(rawResources) || rawResources.length === 0;
+
+    // Trigger search if it's a new term OR if we're on mount with no results
+    if (searchTerm && (isNewTerm || (isFirstRender.current && hasNoResults))) {
+      console.log("[SEARCH] Triggering search for:", searchTerm);
+      
+      // Update tracking refs
       prevSearchTerm.current = searchTerm;
+      isFirstRender.current = false;
+
+      // Reset pagination/store for new search
       setStartIndex(0);
       setPageNumber(1);
       setPageSize(20);
       dispatch({ type: 'resources/setItemsPreviousPageRequest', payload: null });
       dispatch({ type: 'resources/setItemsPageRequest', payload: null });
       dispatch({ type: 'resources/setItemsStoreData', payload: [] });
+
+      dispatch(searchResourcesByTerm({
+        term: searchTerm,
+        id_token: id_token,
+        filters: filters,
+        aspectFilters: selectedAspects,
+        semanticSearch: semanticSearchRef.current,
+        userEmail: user?.email
+      }));
+    } else {
+      // If term is the same as before (Back button case) and we already have results
+      // We do NOTHING - this gives instant restoration from Redux state!
+      if (searchTerm && searchTerm === prevSearchTerm.current) {
+         console.log("[HISTORY] Back navigation detected - restoring from state (Instant)");
+      }
+      isFirstRender.current = false;
     }
   }, [searchTerm]);
 
