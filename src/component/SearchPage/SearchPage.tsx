@@ -2,7 +2,6 @@ import React, { useEffect, useState, useRef } from 'react'
 import { Grid, Box } from '@mui/material'
 import { Tune, FilterList } from '@mui/icons-material'
 import { useDispatch, useSelector } from 'react-redux'
-import { useSearchParams } from 'react-router-dom'
 import FilterDropdown from '../Filter/FilterDropDown'
 import type { AppDispatch } from '../../app/store'
 import { searchResourcesByTerm } from '../../features/resources/resourcesSlice'
@@ -78,9 +77,6 @@ const SearchPage: React.FC<SearchPageProps> = ({ searchResult: _searchResult }) 
   const [selectedDataProducts, setSelectedDataProducts] = useState<string[]>([]);
   const [availableAspects, _setAvailableAspects] = useState<string[]>([]);
 
-  const [searchParams] = useSearchParams();
-  const queryFromUrl = searchParams.get('q') || '';
-
   // Track if this is the first render to avoid clearing persisted data
   const isFirstRender = useRef(true);
   const prevSearchTerm = useRef(searchTerm);
@@ -101,35 +97,27 @@ const SearchPage: React.FC<SearchPageProps> = ({ searchResult: _searchResult }) 
     setIsFiltersOpen(!isFiltersOpen);
   };
 
-  // 1. Sync URL -> Redux (on URL change or mount)
+  // Main Search Trigger Logic
   useEffect(() => {
-    if (queryFromUrl && queryFromUrl !== searchTerm) {
-      console.log("[HISTORY] URL changed, updating Redux term:", queryFromUrl);
-      dispatch({ type: 'search/setSearchTerm', payload: { searchTerm: queryFromUrl } });
+    const hasResults = rawResources && Array.isArray(rawResources) && rawResources.length > 0;
+    
+    // Case 1: Fresh mount (like Back from details) and we ALREADY have results for this term
+    if (isFirstRender.current && hasResults && searchTerm === prevSearchTerm.current) {
+        console.log("[SEARCH] Restoring last search instantly from memory:", searchTerm);
+        isFirstRender.current = false;
+        return;
     }
-  }, [queryFromUrl]);
 
-  // 2. Main Search Trigger (on mount or when searchTerm changes)
-  useEffect(() => {
-    // Determine if we need to search
-    const isNewTerm = searchTerm && searchTerm.trim() !== '' && searchTerm !== prevSearchTerm.current;
-    const hasNoResults = !rawResources || !Array.isArray(rawResources) || rawResources.length === 0;
-
-    // Trigger search if it's a new term OR if we're on mount with no results
-    if (searchTerm && (isNewTerm || (isFirstRender.current && hasNoResults))) {
-      console.log("[SEARCH] Triggering search for:", searchTerm);
-      
-      // Update tracking refs
+    // Case 2: We need to launch a search (either brand new term, or mount with no results)
+    if (searchTerm && (searchTerm !== prevSearchTerm.current || !hasResults)) {
+      console.log("[SEARCH] Launching search for:", searchTerm);
       prevSearchTerm.current = searchTerm;
       isFirstRender.current = false;
 
-      // Reset pagination/store for new search
-      setStartIndex(0);
-      setPageNumber(1);
-      setPageSize(20);
-      dispatch({ type: 'resources/setItemsPreviousPageRequest', payload: null });
-      dispatch({ type: 'resources/setItemsPageRequest', payload: null });
-      dispatch({ type: 'resources/setItemsStoreData', payload: [] });
+      // Only clear if it's a truly new search
+      if (searchTerm !== prevSearchTerm.current) {
+        dispatch({ type: 'resources/setItemsStoreData', payload: [] });
+      }
 
       dispatch(searchResourcesByTerm({
         term: searchTerm,
@@ -139,13 +127,6 @@ const SearchPage: React.FC<SearchPageProps> = ({ searchResult: _searchResult }) 
         semanticSearch: semanticSearchRef.current,
         userEmail: user?.email
       }));
-    } else {
-      // If term is the same as before (Back button case) and we already have results
-      // We do NOTHING - this gives instant restoration from Redux state!
-      if (searchTerm && searchTerm === prevSearchTerm.current) {
-         console.log("[HISTORY] Back navigation detected - restoring from state (Instant)");
-      }
-      isFirstRender.current = false;
     }
   }, [searchTerm]);
 
