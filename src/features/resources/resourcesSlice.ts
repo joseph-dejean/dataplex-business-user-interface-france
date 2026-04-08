@@ -295,10 +295,10 @@ export const resourcesSlice = createSlice({
         state.status = 'loading';
       })
       .addCase(searchResourcesByTerm.fulfilled, (state, action) => {
-        const payload = Array.isArray(action.payload) ? { data: [], requestData: {}, results: {} } : action.payload;
+        const payload = Array.isArray(action.payload) ? { data: [], requestData: {}, results: {}, clearResults: false } : action.payload;
 
         // Handle clear results flag (empty search without semantic mode)
-        if (payload?.clearResults) {
+        if (payload && 'clearResults' in payload && payload.clearResults) {
           state.items = [];
           state.itemsStore = [];
           state.totalItems = 0;
