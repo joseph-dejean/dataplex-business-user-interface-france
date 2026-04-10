@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Accordion,
   AccordionSummary,
@@ -8,16 +8,17 @@ import {
   Box,
   FormControlLabel,
   Checkbox,
-  // Tooltip,
+  IconButton,
+  Tooltip,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CheckIcon from '@mui/icons-material/Check';
-import EditNoteIcon from '../../assets/svg/edit_note.svg';
+import CloseIcon from '@mui/icons-material/Close';
+import EditNoteOutlinedIcon from '@mui/icons-material/EditNoteOutlined';
 import BigQueryIcon from '../../assets/svg/BigQuery.svg';
 import AnalyticsHubIcon from '../../assets/svg/analytics-hub.svg';
 import CloudSQLIcon from '../../assets/svg/cloud-sql.svg';
 import DataformIcon from '../../assets/svg/dataform_logo.svg';
-import DatabaseIcon from '../../assets/svg/database_icon.svg';
 import OthersIcon from '../../assets/svg/others.svg';
 import CloudBigTableIcon from '../../assets/svg/CloudBigTable.svg';
 import CloudPubSubIcon from '../../assets/svg/cloudpub_sub.svg';
@@ -26,32 +27,10 @@ import CloudStorageIcon from '../../assets/svg/CloudStorage.svg';
 import DataplexIcon from '../../assets/svg/Dataplex.svg';
 import DataprocIcon from '../../assets/svg/Dataproc.svg';
 import VertexIcon from '../../assets/svg/vertex.svg';
-import BucketIcon from '../../assets/svg/bucket_icon.svg';
-import ClusterIcon from '../../assets/svg/cluster_icon.svg';
-import CodeAssetIcon from '../../assets/svg/code_asset_icon.svg';
-import ConnectionIcon from '../../assets/svg/connection_icon.svg';
-import DashboardIcon from '../../assets/svg/dashboard_icon.svg';
-import DashboardElementIcon from '../../assets/svg/dashboard_element_icon.svg';
-import DataExchangeIcon from '../../assets/svg/data_exchange_icon.svg';
-import DataStreamIcon from '../../assets/svg/data_stream_icon.svg';
-import DatabaseSchemaIcon from '../../assets/svg/database_schema_icon.svg';
-import DatasetIcon from '../../assets/svg/dataset_icon.svg';
-import ExploreIcon from '../../assets/svg/explore_icon.svg';
-import FeatureGroupIcon from '../../assets/svg/feature_group_icon.svg';
-import FeatureOnlineStoreIcon from '../../assets/svg/feature_online_store_icon.svg';
-import ViewIcon from '../../assets/svg/view_icon.svg';
-import FilesetIcon from '../../assets/svg/fileset_icon.svg';
-import FolderIcon from '../../assets/svg/folder_icon.svg';
-import FunctionIcon from '../../assets/svg/function_icon.svg';
-import GlossaryIcon from '../../assets/svg/glossary_icon.svg';
-import GlossaryCategoryIcon from '../../assets/svg/glossary_category_icon.svg';
-import ListingIcon from '../../assets/svg/listing_icon.svg';
-import LookIcon from '../../assets/svg/look_icon.svg';
-import ModelIcon from '../../assets/svg/model_icon.svg';
-import RepositoriesIcon from '../../assets/svg/repositories_icon.svg';
-import GenericIcon from '../../assets/svg/generic_icon.svg';
-import SchedulerIcon from '../../assets/svg/scheduler_icon.svg';
-import TableIcon from '../../assets/svg/table_icon.svg';
+import FilterAspectsIcon from '../../assets/svg/filter-aspects-icon.svg';
+import FilterAssetIcon from '../../assets/svg/filter-asset-icon.svg';
+import FilterProductIcon from '../../assets/svg/filter-product-icon.svg';
+import FilterProjectIcon from '../../assets/svg/filter-project-icon.svg';
 import { useAuth } from '../../auth/AuthProvider';
 import FilterAnnotationsMultiSelect from './FilterAnnotationsMultiSelect';
 import FilterSubAnnotationsPanel from './FilterSubAnnotationsPanel';
@@ -60,6 +39,9 @@ import { URLS } from '../../constants/urls';
 import { useDispatch, useSelector } from 'react-redux';
 import type { AppDispatch } from '../../app/store';
 import { getProjects } from '../../features/projects/projectsSlice';
+import { getAssetIcon } from '../../utils/resourceUtils';
+import DatabaseSchemaBlueIcon from '../../assets/svg/database_schema_icon_blue.svg';
+import { isGlossaryAssetType, getGlossaryMuiIcon, assetNameToGlossaryType } from '../../constants/glossaryIcons';
 
 /**
  * @file FilterDropdown.tsx
@@ -67,13 +49,50 @@ import { getProjects } from '../../features/projects/projectsSlice';
  * This component renders the main filter sidebar for the application. It displays
  * filter options grouped into expandable accordions: "Aspects" (Annotations),
  * "Assets", "Products", and "Projects".
+ *
+ * Key functionalities include:
+ * 1.  **Filter Selection**: Allows users to select/deselect filters via checkboxes.
+ * 2.  **Parent Communication**: Uses the `onFilterChange` prop to notify the parent
+ * component of any changes to the selected filters.
+ * 3.  **Redux Integration**:
+ * - Reads `searchTerm` and `searchType` from the Redux store.
+ * - Automatically selects "Asset" filters if the `searchTerm` matches an asset name.
+ * - Automatically selects a "Product" filter if the `searchType` is set to a
+ * specific product.
+ * - Dispatches filter changes back to the Redux store.
+ * 4.  **Dynamic Data**: Populates "Aspects" and "Projects" from the `user.appConfig`
+ * provided by the `useAuth` hook.
+ * 5.  **Advanced Filter Modals**:
+ * - Renders a "See...more" button for categories with many items, which opens
+ * the `FilterAnnotationsMultiSelect` modal.
+ * - For "Aspects", it shows an "edit" icon that opens the
+ * `FilterSubAnnotationsPanel`, allowing for more granular,
+ * field-level filtering. This panel fetches sub-annotation data via an API call.
+ * 6.  **Iconography**: Uses helper functions (`getProductIcon`, `getAssetIcon`) to
+ * display appropriate icons for "Product" and "Asset" filter items.
+ *
+ * @param {FilterProps} props - The props for the component.
+ * @param {any[]} [props.filters] - An optional array of the currently selected
+ * filter objects, used to initialize and sync the component's state.
+ * @param {(selectedFilters: any[]) => void} props.onFilterChange - A callback
+ * function that is invoked with the complete array of selected filters whenever
+ * a selection is made, cleared, or modified.
+ *
+ * @returns {React.ReactElement} A React element rendering the filter sidebar UI.
+ * Returns an empty fragment (`<></>`) during a brief loading state after
+ * clearing filters.
  */
 
 //interface for the filter dropdown Props
 interface FilterProps {
   filters?: any[];
   onFilterChange: (selectedFilters: any[]) => void;
-  isGlossary?: boolean;
+  isGlossary? : boolean;
+  onClose?: () => void;
+  availableTypeAliases?: { name: string; count: number }[];
+  onTypeAliasClick?: (type: string) => void;
+  resourcesTotalSize?: number;
+  resourcesStatus?: string;
 }
 
 // Function to get icon for product
@@ -97,7 +116,7 @@ const getProductIcon = (productName: string) => {
       return DataformIcon;
     case 'Dataplex':
       return DataplexIcon;
-    case 'Dataplex Universal Catalog':
+    case 'Knowledge Catalog':
       return DataplexIcon;
     case 'Dataproc Metastore':
       return DataprocIcon;
@@ -108,263 +127,270 @@ const getProductIcon = (productName: string) => {
   }
 };
 
-const getAssetIcon = (assetName: string) => {
-  switch (assetName) {
-    case 'Bucket':
-      return BucketIcon;
-    case 'Cluster':
-      return ClusterIcon;
-    case 'Code asset':
-      return CodeAssetIcon;
-    case 'Connection':
-      return ConnectionIcon;
-    case 'Dashboard':
-      return DashboardIcon;
-    case 'Dashboard element':
-      return DashboardElementIcon;
-    case 'Data exchange':
-      return DataExchangeIcon;
-    case 'Data Product':
-      return DataplexIcon;
-    case 'Data source connection':
-      return ConnectionIcon;
-    case 'Data stream':
-      return DataStreamIcon;
-    case 'Database':
-      return DatabaseIcon;
-    case 'Database schema':
-      return DatabaseSchemaIcon;
-    case 'Dataset':
-      return DatasetIcon;
-    case 'Explore':
-      return ExploreIcon;
-    case 'Feature group':
-      return FeatureGroupIcon;
-    case 'Feature online store':
-      return FeatureOnlineStoreIcon;
-    case 'Feature view':
-      return ViewIcon;
-    case 'Fileset':
-      return FilesetIcon;
-    case 'Folder':
-      return FolderIcon;
-    case 'Function':
-      return FunctionIcon;
-    case 'Glossary':
-      return GlossaryIcon;
-    case 'Glossary Category':
-      return GlossaryCategoryIcon;
-    case 'Glossary Term':
-      return GlossaryIcon;
-    case 'Listing':
-      return ListingIcon;
-    case 'Look':
-      return LookIcon;
-    case 'Model':
-      return ModelIcon;
-    case 'Repository':
-      return RepositoriesIcon;
-    case 'View':
-      return ViewIcon;
-    case 'Resource':
-      return GenericIcon;
-    case 'Routine':
-      return SchedulerIcon;
-    case 'Table':
-      return TableIcon;
+
+const getSectionIcon = (title: string): string | null => {
+  switch (title) {
+    case 'Aspects':
+      return FilterAspectsIcon;
+    case 'Assets':
+      return FilterAssetIcon;
+    case 'Products':
+      return FilterProductIcon;
+    case 'Projects':
+      return FilterProjectIcon;
     default:
-      return GenericIcon;
+      return null;
   }
 };
 
-const FilterDropdown: React.FC<FilterProps> = ({ filters, onFilterChange, isGlossary = false }) => {
-  const { user } = useAuth();
-  const dispatch = useDispatch<AppDispatch>();
-  const searchTerm = useSelector((state: any) => state.search.searchTerm);
-  const searchType = useSelector((state: any) => state.search.searchType);
-  const projectsLoaded = useSelector((state: any) => state.projects.isloaded);
-  const projectsList = useSelector((state: any) => state.projects.items);
 
-  let annotations: any = {
-    title: 'Aspects',
-    items: [],
-    defaultExpanded: false,
-  };
+const FilterDropdown: React.FC<FilterProps> = ({ filters , onFilterChange, isGlossary = false, onClose }) => {
+  // const [anchorEl, setAnchorEl] = useState(null);
+  // const [selectedCategory, setSelectedCategory] = useState(null);
 
-  let assets: any = {
+ let assets:any = {
     title: 'Assets',
     items: [
-      { "name": "Bucket", "type": "typeAliases" },
-      { "name": "Cluster", "type": "typeAliases" },
-      { "name": "Code asset", "type": "typeAliases" },
-      { "name": "Connection", "type": "typeAliases" },
-      { "name": "Dashboard", "type": "typeAliases" },
-      { "name": "Dashboard element", "type": "typeAliases" },
-      { "name": "Data exchange", "type": "typeAliases" },
-      { "name": "Data Product", "type": "typeAliases" },
-      { "name": "Data source connection", "type": "typeAliases" },
-      { "name": "Data stream", "type": "typeAliases" },
-      { "name": "Database", "type": "typeAliases" },
-      { "name": "Database schema", "type": "typeAliases" },
-      { "name": "Dataset", "type": "typeAliases" },
-      { "name": "Explore", "type": "typeAliases" },
-      { "name": "Feature group", "type": "typeAliases" },
-      { "name": "Feature online store", "type": "typeAliases" },
-      { "name": "Feature view", "type": "typeAliases" },
-      { "name": "Fileset", "type": "typeAliases" },
-      { "name": "Folder", "type": "typeAliases" },
-      { "name": "Function", "type": "typeAliases" },
-      { "name": "Glossary", "type": "typeAliases" },
-      { "name": "Glossary Category", "type": "typeAliases" },
-      { "name": "Glossary Term", "type": "typeAliases" },
-      { "name": "Listing", "type": "typeAliases" },
-      { "name": "Look", "type": "typeAliases" },
-      { "name": "Model", "type": "typeAliases" },
-      { "name": "Repository", "type": "typeAliases" },
-      { "name": "Resource", "type": "typeAliases" },
-      { "name": "Routine", "type": "typeAliases" },
-      { "name": "Service", "type": "typeAliases" },
-      { "name": "Table", "type": "typeAliases" },
-      { "name": "View", "type": "typeAliases" },
-      { "name": "Other", "type": "typeAliases" }
+      {
+        "name": "Bucket",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Cluster",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Code asset",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Connection",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Dashboard",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Dashboard element",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Data exchange",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Data source connection",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Data stream",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Database",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Database schema",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Dataset",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Explore",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Feature group",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Feature online store",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Feature view",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Fileset",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Folder",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Function",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Glossary",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Glossary Category",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Glossary Term",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Listing",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Look",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Model",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Repository",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Resource",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Routine",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Service",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Table",
+        "type": "typeAliases"
+      },
+      {
+        "name": "View",
+        "type": "typeAliases"
+      },
+      {
+        "name": "Other",
+        "type": "typeAliases"
+      }
     ],
     defaultExpanded: false,
   };
-
-  let products: any = {
+  let products:any = {
     title: 'Products',
     items: [
-      { "name": "Analytics Hub", "type": "system" },
-      { "name": "BigQuery", "type": "system" },
-      { "name": "Cloud BigTable", "type": "system" },
-      { "name": "Cloud Pub/Sub", "type": "system" },
-      { "name": "Cloud Spanner", "type": "system" },
-      { "name": "Cloud SQL", "type": "system" },
-      { "name": "Dataform", "type": "system" },
-      { "name": "Dataplex Universal Catalog", "type": "system" },
-      { "name": "Dataproc Metastore", "type": "system" },
-      { "name": "Vertex AI", "type": "system" },
-      { "name": "Others", "type": "system" }
+      {
+        "name": "Analytics Hub",
+        "type": "system"
+      },
+      {
+        "name": "BigQuery",
+        "type": "system"
+      },
+      {
+        "name": "Cloud BigTable",
+        "type": "system"
+      },
+      {
+        "name": "Cloud Pub/Sub",
+        "type": "system"
+      },
+      {
+        "name": "Cloud Spanner",
+        "type": "system"
+      },
+      {
+        "name": "Cloud SQL",
+        "type": "system"
+      },
+      {
+        "name": "Dataform",
+        "type": "system"
+      },
+      {
+        "name": "Knowledge Catalog",
+        "type": "system"
+      },
+      {
+        "name": "Dataproc Metastore",
+        "type": "system"
+      },
+      {
+        "name": "Vertex AI",
+        "type": "system"
+      },
+      {
+        "name": "Others",
+        "type": "system"
+      }
     ],
     defaultExpanded: false,
   };
-
-  let projects: any = {
+  const { user } = useAuth();
+  const dispatch = useDispatch<AppDispatch>();
+  const mode = useSelector((state: any) => state.user.mode) as string;
+  const searchTerm = useSelector((state: any) => state.search.searchTerm);
+  const searchSubmitted = useSelector((state: any) => state.search.searchSubmitted);
+  const projectsLoaded = useSelector((state: any) => state.projects.isloaded);
+  const projectsList = useSelector((state: any) => state.projects.items);
+  const [loading, setLoading] = useState(false);
+  let annotations:any = {
+    title: 'Aspects',
+    items: [
+    ],
+    defaultExpanded: false,
+  };
+ 
+  
+  let projects:any = {
     title: 'Projects',
     items: [],
     defaultExpanded: false,
   };
-
-  const [availableGlossaries, setAvailableGlossaries] = useState<any[]>([]);
-
-  const [filterData, setFilterData] = useState<any[]>(
-    isGlossary
-      ? [assets, products, projects]
-      : [annotations, { title: 'Glossaries', items: [], defaultExpanded: false }, assets, products, projects]
-  );
-
-  useEffect(() => {
-    const fetchAvailableGlossaries = async () => {
-      try {
-        const response = await axios.post(`https://dataplex.googleapis.com/v1/projects/${import.meta.env.VITE_GOOGLE_PROJECT_ID}/locations/global:searchEntries`, {
-          query: "type=GLOSSARY EXP:SEMANTIC",
-          pageSize: 100
-        }, {
-          headers: { Authorization: `Bearer ${user?.token}` }
-        });
-
-        if (response.data && response.data.results) {
-          const items = response.data.results.map((r: any) => ({
-            name: r.dataplexEntry.entrySource.displayName || r.dataplexEntry.name.split('/').pop(),
-            type: "glossary",
-            data: r.dataplexEntry
-          }));
-          setAvailableGlossaries(items);
-        }
-      } catch (err) {
-        console.error("Error fetching glossaries for filter:", err);
-      }
-    };
-
-    if (user?.token) {
-      fetchAvailableGlossaries();
-    }
-  }, [user?.token]);
-
-  const loadAspectsData = async () => {
-    if (user?.appConfig?.aspects && Array.isArray(user.appConfig.aspects) && user.appConfig.aspects.length > 0) {
-      const items = user.appConfig.aspects.map((aspect: any) => ({
+  if(annotations && user?.appConfig && user?.appConfig.aspects && Array.isArray(user?.appConfig.aspects)){
+    const seen = new Set<string>();
+    annotations.items = user?.appConfig.aspects
+      .map((aspect:any) => ({
         name: aspect.dataplexEntry.entrySource.displayName || (aspect.dataplexEntry.name ? aspect.dataplexEntry.name.split('/').pop() : ''),
         type: "aspectType",
         data: aspect.dataplexEntry
-      }));
-      return items;
-    }
-
-    // Fallback: fetch aspects from API if not in appConfig
-    try {
-      const response = await axios.get(`${URLS.API_URL}${URLS.GET_ASPECT_TYPES}`, {
-        headers: { Authorization: `Bearer ${user?.token}` }
+      }))
+      .filter((item: { name: string; type: string; data: Record<string, unknown> }) => {
+        if (seen.has(item.name)) return false;
+        seen.add(item.name);
+        return true;
       });
-      let aspectTypes = response.data || [];
-      if (!Array.isArray(aspectTypes)) {
-        aspectTypes = response.data?.data || [];
+  }
+  if(projects && user?.appConfig && user?.appConfig.projects && Array.isArray(user?.appConfig.projects)){
+    let plist:any = projectsLoaded ? projectsList : user?.appConfig.projects;
+    let p:any = plist.map((project:any) => ({
+      name: project.projectId,
+      type: "project",
+      data: {}
+    }));
+
+    projects.items = [
+      ...p, 
+      {
+        name: 'Others',
+        type: "project",
+        data: {}
       }
+    ];
+  }
 
-      return aspectTypes.map((aspect: any) => ({
-        name: aspect.displayName || aspect.name?.split('/').pop() || 'Unknown Aspect',
-        type: "aspectType",
-        data: {
-          name: aspect.name,
-          entrySource: {
-            displayName: aspect.displayName || aspect.name?.split('/').pop(),
-            resource: aspect.name
-          }
-        }
-      }));
-    } catch (error) {
-      console.error('Error fetching aspects for FilterDropDown:', error);
-      return [];
-    }
-  };
 
-  useEffect(() => {
-    const updateFilterData = async () => {
-      if (user?.appConfig) {
-        const aspectItems = await loadAspectsData();
-        const annotationsData = {
-          title: 'Aspects',
-          items: aspectItems,
-          defaultExpanded: false,
-        };
-
-        let pItems = [];
-        if (user.appConfig.projects && Array.isArray(user.appConfig.projects)) {
-          let plist: any = projectsLoaded ? projectsList : user.appConfig.projects;
-          pItems = plist.map((project: any) => ({
-            name: project.projectId,
-            type: "project",
-            data: {}
-          }));
-          pItems.push({ name: 'Others', type: "project", data: {} });
-        }
-
-        const glossariesData = {
-          title: 'Glossaries',
-          items: availableGlossaries,
-          defaultExpanded: false,
-        };
-
-        const newData = isGlossary
-          ? [assets, products, { ...projects, items: pItems }]
-          : [annotationsData, glossariesData, assets, products, { ...projects, items: pItems }];
-
-        setFilterData(newData);
-      }
-    };
-
-    updateFilterData();
-  }, [user?.appConfig, projectsLoaded, projectsList, isGlossary, availableGlossaries]);
+  const [filterData, setFilterData] = useState<any[]>(
+    isGlossary
+      ? [products, assets, projects]
+      : [products, assets, annotations, projects]
+  );
 
   const [showSubAnnotationsPanel, setShowSubAnnotationsPanel] = useState(false);
   const [selectedAnnotationForSubPanel, setSelectedAnnotationForSubPanel] = useState<string>('');
@@ -375,125 +401,214 @@ const FilterDropdown: React.FC<FilterProps> = ({ filters, onFilterChange, isGlos
   const [clickPosition, setClickPosition] = useState<{ top: number; right: number } | undefined>(undefined);
   const [subAnnotationData, setSubAnnotationData] = useState<any[]>([]);
   const [subAnnotationsloaded, setSubAnnotationsloaded] = useState(false);
-
   const [selectedFilters, setSelectedFilters] = useState<any[]>(filters ?? []);
+  const selectedFiltersRef = useRef(selectedFilters);
+  selectedFiltersRef.current = selectedFilters;
 
   useEffect(() => {
-    if (!projectsLoaded) {
+    if(!projectsLoaded) {
       dispatch(getProjects({ id_token: user?.token }));
     }
   }, []);
 
   useEffect(() => {
+    if(projectsLoaded){
+      let plist:any = projectsList;
+      let p:any = plist.map((project:any) => ({
+        name: project.projectId,
+        type: "project",
+        data: {}
+      }));
+      setFilterData((prevData:any) => prevData.map((filterCategory:any) => {
+        if(filterCategory.title === 'Projects'){
+          return { ...filterCategory, items: [...p, { name: 'Others', type: "project", data: {} }] };
+        }
+        return filterCategory;
+      }));
+    }
+  }, [projectsLoaded]);
+  // Keep internal selection in sync with parent-provided filters
+  useEffect(() => {
     setSelectedFilters(filters ?? []);
   }, [filters]);
 
+  // Auto-select/clear filters when search is explicitly submitted (Enter or autocomplete select)
   useEffect(() => {
+    if (!searchSubmitted) return;
     if (isGlossary) return;
-    if (searchTerm && searchType === 'All' && searchTerm.length >= 3) {
-      const matchingAssets = assets.items.filter((asset: any) =>
-        asset.name.toLowerCase() === (searchTerm.toLowerCase())
+
+    const currentFilters = selectedFiltersRef.current;
+
+    if (searchTerm && searchTerm.length >= 3) {
+      // Check for matching asset (typeAliases)
+      const matchingAsset = assets.items.find((asset: any) =>
+        asset.name.toLowerCase() === searchTerm.toLowerCase()
       );
 
-      if (matchingAssets.length > 0) {
-        const currentAssetFilters = selectedFilters.filter((f: any) => f.type === 'typeAliases');
-        const newAssetFilters = matchingAssets
-          .filter((asset: any) => !currentAssetFilters.some((f: any) => f.name === asset.name))
-          .map((asset: any) => ({
-            name: asset.name,
-            type: asset.type,
-            data: asset.data
-          }));
+      // Check for matching product (system), including aliases for renamed products
+      const PRODUCT_SEARCH_ALIASES: Record<string, string> = {
+        "dataplex universal catalog": "Knowledge Catalog",
+      };
+      const matchingProduct = products.items.find((product: any) =>
+        product.name.toLowerCase() === searchTerm.toLowerCase()
+      ) || products.items.find((product: any) =>
+        PRODUCT_SEARCH_ALIASES[searchTerm.toLowerCase()] === product.name
+      );
 
-        if (newAssetFilters.length > 0) {
-          const updatedFilters = [...selectedFilters, ...newAssetFilters];
+      if (matchingAsset) {
+        // Clear ALL existing filters, set only the matching asset filter
+        const updatedFilters = [{ name: matchingAsset.name, type: matchingAsset.type, data: matchingAsset.data }];
+        if (JSON.stringify(updatedFilters) !== JSON.stringify(currentFilters)) {
           setSelectedFilters(updatedFilters);
           onFilterChange(updatedFilters);
         }
+      } else if (matchingProduct) {
+        // Clear ALL existing filters, set only the matching product filter
+        const updatedFilters = [{ name: matchingProduct.name, type: matchingProduct.type, data: matchingProduct.data }];
+        if (JSON.stringify(updatedFilters) !== JSON.stringify(currentFilters)) {
+          setSelectedFilters(updatedFilters);
+          onFilterChange(updatedFilters);
+        }
+      } else {
+        // No matching asset or product — clear typeAliases filters only
+        const nonAssetFilters = currentFilters.filter((f: any) => f.type !== 'typeAliases');
+        if (nonAssetFilters.length !== currentFilters.length) {
+          setSelectedFilters(nonAssetFilters);
+          onFilterChange(nonAssetFilters);
+        }
       }
-    }
-  }, [searchTerm, searchType, assets.items, selectedFilters, onFilterChange, isGlossary]);
-
-  useEffect(() => {
-    if (isGlossary) return;
-    if (!searchTerm || searchType !== 'All') {
-      const nonAssetFilters = selectedFilters.filter((f: any) => f.type !== 'typeAliases');
-      if (nonAssetFilters.length !== selectedFilters.length) {
+    } else {
+      // Search term empty/short — clear typeAliases filters
+      const nonAssetFilters = currentFilters.filter((f: any) => f.type !== 'typeAliases');
+      if (nonAssetFilters.length !== currentFilters.length) {
         setSelectedFilters(nonAssetFilters);
         onFilterChange(nonAssetFilters);
       }
     }
-  }, [searchTerm, searchType, selectedFilters, onFilterChange, isGlossary]);
+
+    dispatch({ type: 'search/setSearchSubmitted', payload: false });
+  }, [searchSubmitted]);
+
+
 
   useEffect(() => {
-    if (searchType && searchType !== 'All') {
-      const matchingProduct = products.items.find((product: any) => product.name === searchType);
-      if (matchingProduct) {
-        const currentProductFilters = selectedFilters.filter((f: any) => f.type === 'system');
-        const isAlreadySelected = currentProductFilters.some((f: any) => f.name === searchType);
+    // Re-construct projects list
+    let plist:any = projectsLoaded ? projectsList : (user?.appConfig?.projects || []);
+    let pItems = plist.map((project:any) => ({
+      name: project.projectId,
+      type: "project",
+      data: {}
+    }));
+    
+    pItems.push({ name: 'Others', type: "project", data: {} });
 
-        if (!isAlreadySelected) {
-          const nonProductFilters = selectedFilters.filter((f: any) => f.type !== 'system');
-          const newProductFilter = {
-            name: matchingProduct.name,
-            type: matchingProduct.type,
-            data: matchingProduct.data
-          };
-          const updatedFilters = [...nonProductFilters, newProductFilter];
-          setSelectedFilters(updatedFilters);
-          onFilterChange(updatedFilters);
-        }
-      }
-    }
-  }, [searchType, products.items, selectedFilters, onFilterChange]);
+    const newProjects = { ...projects, items: pItems };
+
+    setFilterData(
+      isGlossary
+        ? [products, assets, newProjects]
+        : [products, assets, annotations, newProjects]
+    );
+    
+  }, [projectsLoaded, user?.appConfig]);
 
   const [expandedSections, setExpandedSections] = useState<{ [key: string]: boolean }>({
     'Aspects': false,
-    'Glossaries': false,
     'Assets': false,
     'Products': false,
     'Projects': false
   });
 
-  const handleCheckboxChange = (filter: any) => {
-    const updatedFilters = selectedFilters.some(item => item.name === filter.name && item.type === filter.type)
+  // Auto-expand accordions when search term exists or specific product is selected
+
+const handleCheckboxChange = (filter: any) => {
+    const isSelected = selectedFilters.some(item => item.name === filter.name && item.type === filter.type);
+
+    const updatedFilters = isSelected
       ? selectedFilters.filter((f) => !(f.name === filter.name && f.type === filter.type))
       : [...selectedFilters, filter];
 
     setSelectedFilters(updatedFilters);
     onFilterChange(updatedFilters);
-    dispatch({ type: 'search/setSearchFilters', payload: { searchFilters: updatedFilters } });
 
-    if (filter.type === 'system' && filter.name === "BigQuery") {
-      if (!updatedFilters.find(item => item.name === filter.name)) {
-        dispatch({ type: 'search/setSearchType', payload: { searchType: 'All' } });
+    if (!isGlossary) {
+      dispatch({ type: 'search/setSearchFilters', payload: { searchFilters: updatedFilters } });
+
+      if (filter.type === 'system' && filter.name === "BigQuery") {
+        if (!updatedFilters.find(item => item.name === filter.name)) {
+          dispatch({ type: 'search/setSearchType', payload: { searchType: 'All' } });
+        }
       }
     }
   };
 
-  const handleAccordionChange = (section: string) => (_: React.SyntheticEvent, isExpanded: boolean) => {
-    setExpandedSections(prev => ({ ...prev, [section]: isExpanded }));
+
+  const handleAccordionChange = (panel: string) => (_event: React.SyntheticEvent, isExpanded: boolean) => {
+    setExpandedSections({
+      'Products': false,
+      'Assets': false,
+      'Aspects': false,
+      'Projects': false,
+      [panel]: isExpanded
+    });
   };
 
-  const handleSeeMoreClick = (filterType: string, event: React.MouseEvent) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    setMultiselectPosition({ top: rect.top, left: rect.left });
+  // Removed useEffect to prevent automatic filter changes on mount/unmount
+
+  const handleFilterClear = () => {
+    setSelectedFilters([]);
+    onFilterChange([]); // Notify parent
+    dispatch({ type: 'search/setSearchFilters', payload: { searchFilters: [] } });
+    dispatch({ type: 'search/setSearchType', payload: { searchType: 'All' } });
+    setLoading(true);
+    setTimeout(() => {
+      setLoading(false);  
+    }, 100); // Simulate loading delay
+  };
+
+
+  const handleViewAllItems = (filterType: string, event: React.MouseEvent) => {
     setCurrentFilterType(filterType);
+    
+    // Get the position of the clicked accordion to position the modal adjacent to it
+    const accordionElement = event.currentTarget.closest('.MuiAccordion-root');
+    if (accordionElement) {
+      const rect = accordionElement.getBoundingClientRect();
+      const headerElement = accordionElement.querySelector('.MuiAccordionSummary-root');
+      const headerRect = headerElement ? headerElement.getBoundingClientRect() : rect;
+      
+      setMultiselectPosition({
+        top: ((headerRect.top + window.scrollY + 341) > window.innerHeight) 
+          ? window.innerHeight - 360
+          : headerRect.top + window.scrollY,
+        left: isGlossary ? (rect.left - 730) : (rect.right + 16)
+      });
+    }
+    
     setShowMultiSelect(true);
   };
 
+
   const handleMultiSelectChange = (selectedItems: string[]) => {
+    console.log('Generic multiselect change:', selectedItems, 'for filter:', currentFilterType);
+    
+    // Find the current filter data
     const currentFilter = filterData.find((f: any) => f.title === currentFilterType);
     if (!currentFilter) return;
 
-    const newFilters = selectedItems.map(item => ({
-      name: item,
-      type: currentFilter.items[0]?.type || 'typeAliases'
-    }));
+    // Convert selected items to filter format, preserving existing subAnnotationData
+    const filterType = currentFilter.items[0]?.type || 'typeAliases';
+    const newFilters = selectedItems.map(item => {
+      const existing = selectedFilters.find(sf => sf.name === item && sf.type === filterType);
+      return existing ?? { name: item, type: filterType };
+    });
 
+    // Remove existing filters of this type
     const filteredSelectedFilters = selectedFilters.filter((sf: any) => sf.type !== (currentFilter.items[0]?.type || 'typeAliases'));
+    
+    // Add new filters
     const updatedFilters = [...filteredSelectedFilters, ...newFilters];
-
+    
     setSelectedFilters(updatedFilters);
     onFilterChange(updatedFilters);
   };
@@ -502,50 +617,69 @@ const FilterDropdown: React.FC<FilterProps> = ({ filters, onFilterChange, isGlos
     setShowMultiSelect(false);
     setCurrentFilterType('');
     setMultiselectPosition(null);
+    // Also close the sub-annotations panel if it's open
+    if (showSubAnnotationsPanel) {
+      handleCloseSubAnnotationsPanel();
+    }
   };
 
+  // Mock data for sub-annotations - in real app this would come from API
   const getSubAnnotationsForAnnotation = async (annotationData: any) => {
     axios.defaults.headers.common['Authorization'] = `Bearer ${user?.token ?? ''}`;
-
+    
     const response = await axios.post(URLS.API_URL + URLS.GET_ASPECT_DETAIL, {
-      name: annotationData.entrySource.resource
+      name:annotationData.entrySource.resource
     });
 
     const data = await response.data;
-    const sampleFields = [{ name: 'Temaplate_Field', type: 'string' }];
+    console.log('filter subannotations', data);
+    
+    // Transform recordFields to include type information
+    // For demo purposes, create sample fields that match the ideal design
+    const sampleFields = [
+      { name: 'Temaplate_Field', type: 'string' }
+    ];
+    
     const transformedFields = data.metadataTemplate.recordFields?.map((r: any) => ({
       name: String(r.name || ''),
-      type: r.type || 'string',
-      enumValues: r.enumValues ? r.enumValues.map((val: any) => {
+      displayName: r.annotations?.displayName || undefined,
+      type: r.type || 'string', // Default to string if type is not specified
+      enumValues: r.enumValues?.length ? r.enumValues.map((val: any) => {
+        // API returns enum values as objects with { name, index, deprecated }
         if (typeof val === 'object' && val !== null) {
           return val.name || val.value || val.label || JSON.stringify(val);
         }
         return String(val);
       }) : undefined
     })) || sampleFields;
-
+    
     setSubAnnotationData(transformedFields);
     setSubAnnotationsloaded(true);
   };
 
-  const handleEditNoteClick = (annotationName: string, data: any, event: React.MouseEvent) => {
+  const handleEditNoteClick = (annotationName: string, data:any, event: React.MouseEvent) => {
     setSelectedAnnotationForSubPanel(annotationName);
     setSubAnnotationData([]);
     setSubAnnotationsloaded(false);
     getSubAnnotationsForAnnotation(data);
-
-    const isParentSelected = selectedFilters.some(filter =>
+    
+    // Restore previously applied sub-annotation values if they exist
+    const existingFilter = selectedFilters.find(filter =>
       filter.name === annotationName && filter.type === 'aspectType'
     );
-
-    setSelectedSubAnnotations(isParentSelected ? [] : []);
+    setSelectedSubAnnotations(existingFilter?.subAnnotationData ?? []);
+    
     const rect = event.currentTarget.getBoundingClientRect();
     setClickPosition({ top: rect.top, right: rect.right });
+
     setShowSubAnnotationsPanel(true);
   };
 
   const handleSubAnnotationsChange = (selectedSubAnnotations: any[]) => {
     setSelectedSubAnnotations(selectedSubAnnotations);
+    
+    // Don't auto-check parent annotation - this will be handled by Apply button
+    console.log('Sub-annotations changed for', selectedAnnotationForSubPanel, ':', selectedSubAnnotations);
   };
 
   const handleCloseSubAnnotationsPanel = () => {
@@ -555,296 +689,409 @@ const FilterDropdown: React.FC<FilterProps> = ({ filters, onFilterChange, isGlos
   };
 
   const handleSubAnnotationsApply = (appliedSubAnnotations: any[]) => {
+    // When Apply button is clicked in FilterSubAnnotationsPanel, check the parent annotation
     if (appliedSubAnnotations.length > 0) {
       const parentAnnotation = {
         name: selectedAnnotationForSubPanel,
         type: 'aspectType',
-        subAnnotationData: appliedSubAnnotations
+        subAnnotationData: appliedSubAnnotations // You can include additional data if needed
       };
-
-      const alreadySelected = selectedFilters.some(filter =>
-        filter.name === selectedAnnotationForSubPanel && filter.type === 'aspectType'
-      );
-
-      if (!alreadySelected) {
+      
+      // Add parent annotation to selected filters if not already present
+      if (!selectedFilters.some(filter => filter.name === selectedAnnotationForSubPanel && filter.type === 'aspectType')) {
         const updatedFilters = [...selectedFilters, parentAnnotation];
         setSelectedFilters(updatedFilters);
         onFilterChange(updatedFilters);
-        dispatch({ type: 'search/setSearchFilters', payload: { searchFilters: updatedFilters } });
+      }else{
+
+        const updatedFilters = [...selectedFilters.filter(filter => filter.name !== selectedAnnotationForSubPanel && filter.type === 'aspectType'), parentAnnotation];
+        setSelectedFilters(updatedFilters);
+        onFilterChange(updatedFilters);
       }
+    } else {
+      // If no sub-annotations are applied, remove the parent annotation
+      const updatedFilters = selectedFilters.filter(filter => 
+        !(filter.name === selectedAnnotationForSubPanel && filter.type === 'aspectType')
+      );
+      setSelectedFilters(updatedFilters);
+      onFilterChange(updatedFilters);
     }
+    
+    // Close the panel
     handleCloseSubAnnotationsPanel();
   };
 
-  return (
-    <>
-      <Box sx={{
-        width: "100%",
-        display: "flex",
-        flexDirection: "column",
-        flex: "1 1 auto",
+  // Debug useEffect to monitor selectedFilters changes
+  // useEffect(() => {
+  //   console.log('selectedFilters changed:', selectedFilters);
+  // }, [selectedFilters]);
+
+  // const handleMenuOpen = (event:any) => {
+  //   setAnchorEl(event.currentTarget);
+  // };
+
+  // const handleMenuClose = () => {
+  //   setAnchorEl(null);
+  // };
+
+  // const handleMenuItemClick = (category:any) => {
+  //   setSelectedCategory(category);
+  //   handleMenuClose();
+  //   // Apply the filter logic here
+  // };
+
+  return !loading ? (
+    <Box
+      sx={{
         overflowY: "auto",
-        overflowX: "hidden",
-        backgroundColor: "none",
-        marginLeft: "-0.5rem",
+        scrollbarWidth: "none", // Firefox
+        "&::-webkit-scrollbar": { display: "none" }, // Chrome/Safari
+        "-ms-overflow-style": "none", // IE and Edge
+        maxHeight: "100%"
+      }}
+    >
+      <Box sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'flex-start',
+        padding: isGlossary ? '0px' : '0px 16px 24px 20px',
+        gap: '20px',
       }}>
+        {/* Header: Filters / Clear / X */}
         <div style={{
-          fontSize: "0.75rem",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            width: "100%",
+            position: isGlossary ? "relative" : "sticky",
+            top: 0,
+            zIndex: 1,
+            backgroundColor: isGlossary ? "transparent" : (mode === 'dark' ? '#282a2c' : '#F8FAFD'),
+            padding: isGlossary ? "0px" : "24px 0 0 0",
+        }}>
+            <Typography sx={{fontWeight: 500, fontSize: "16px", lineHeight: "24px", color: mode === 'dark' ? '#e3e3e3' : '#1F1F1F', fontFamily: '"Google Sans", sans-serif'}}>Filters</Typography>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '24px' }}>
+              <Button onClick={handleFilterClear}
+                disabled={selectedFilters.length === 0}
+                sx={{
+                  fontFamily: '"Google Sans", sans-serif',
+                  fontWeight: 700,
+                  color: mode === 'dark' ? '#e3e3e3' : '#1F1F1F',
+                  fontSize: "12px",
+                  lineHeight: "16px",
+                  letterSpacing: "0.1px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: "0px",
+                  textTransform: "none",
+                  minWidth: "auto",
+                  opacity: 1,
+                  '&.Mui-disabled': {
+                    color: mode === 'dark' ? '#e3e3e3' : '#1F1F1F',
+                    opacity: 0.3,
+                  },
+              }}>Clear</Button>
+              {onClose && (
+                <IconButton
+                  onClick={onClose}
+                  size="small"
+                  sx={{
+                    padding: '8px',
+                    color: mode === 'dark' ? '#9aa0a6' : '#575757',
+                    '&:hover': { backgroundColor: mode === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)' }
+                  }}
+                >
+                  <CloseIcon sx={{ fontSize: '16px' }} />
+                </IconButton>
+              )}
+            </div>
+        </div>
+
+        {/* Accordion Sections */}
+        <div style={{
           display: "flex",
           flexDirection: "column",
-          flex: "1 1 auto"
+          alignItems: "flex-start",
+          width: "100%",
+          padding: 0,
         }}>
-          {filterData.map((filter: any) => (
+        {filterData.map((filter:any) =>
+          (
             <Accordion
               key={filter.title}
               expanded={expandedSections[filter.title] || filter.defaultExpanded}
               onChange={handleAccordionChange(filter.title)}
-              style={{ background: "none", boxShadow: "none", margin: 0, flex: "0 0 auto" }}
               disableGutters
               sx={{
-                background: "none",
-                boxShadow: "none",
-                '&:before': {
-                  content: '""',
-                  position: 'absolute',
-                  top: 0,
-                  backgroundColor: '#E0E0E0',
-                  height: '1px',
-                  left: '5px',
-                  right: '3.5px',
-                  opacity: 1,
-                },
-                borderTop: 'none',
-              }}
+                    background: 'none',
+                    boxShadow: 'none',
+                    width: '100%',
+                    margin: 0,
+                    borderTop: `1px solid ${mode === 'dark' ? '#3c4043' : '#DADCE0'}`,
+                    '&:first-of-type': { borderTop: 'none' },
+                    borderRadius: '0 !important',
+                    '&:before': { display: 'none' },
+                    '&.Mui-expanded': { margin: 0 },
+                    '&:has(.MuiAccordionSummary-root:hover)': { borderColor: 'transparent' },
+                    '&:has(.MuiAccordionSummary-root:hover) + .MuiAccordion-root': { borderColor: 'transparent' },
+                  }}
             >
               <AccordionSummary
-                expandIcon={<ExpandMoreIcon />}
-                aria-controls={filter.title + "-content"}
-                id={filter.title + "-header"}
+                expandIcon={<ExpandMoreIcon sx={{ color: mode === 'dark' ? '#9aa0a6' : '#575757', fontSize: '24px' }} />}
+                aria-controls={filter.title+"-content"}
+                id={filter.title+"-header"}
                 sx={{
-                  padding: "0rem 0.7rem 0rem 0.65rem", flex: "0 0 auto", minHeight: 'auto',
-                  '& .MuiAccordionSummary-content': {
-                    lineHeight: '48px',
-                    margin: "14px -1.2px"
-                  },
-                  '& .MuiAccordionSummary-expandIconWrapper': {
-                    marginRight: '-3px',
-                  },
-                  '&.Mui-expanded': {
-                    minHeight: 'auto',
-                    '& .MuiAccordionSummary-content': {
-                      lineHeight: '48px',
-                      margin: "14px -1.2px"
-                    }
-                  }
+                  padding: '12px 4px',
+                  minHeight: 'unset !important',
+                  borderRadius: '8px',
+                  '& .MuiAccordionSummary-content': { margin: 0 },
+                  '&.Mui-expanded': { minHeight: 'unset !important' },
+                  '& .MuiAccordionSummary-expandIconWrapper': { marginRight: 0 },
+                  '&:hover': { backgroundColor: mode === 'dark' ? 'rgba(138, 180, 248, 0.16)' : '#D3E3FD' },
                 }}
               >
                 <div style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: "0.5rem",
-                  flex: "0 1 auto",
+                  gap: "8px",
                 }}>
+                  {getSectionIcon(filter.title) && (
+                    <img
+                      src={getSectionIcon(filter.title)!}
+                      alt=""
+                      style={{
+                        width: '20px',
+                        height: '20px',
+                        flexShrink: 0,
+                      }}
+                    />
+                  )}
                   <Typography component="span"
-                    sx={{ fontWeight: expandedSections[filter.title] || filter.defaultExpanded ? 500 : 400, fontSize: "12px", lineHeight: "20px", color: "#1F1F1F", fontFamily: "Product Sans", letterSpacing: "0.1px" }}>
-                    {filter.title}
+                    sx={{fontWeight: 400, fontSize:"14px", lineHeight:"20px", color: mode === 'dark' ? '#e3e3e3' : '#1F1F1F', fontFamily:'"Product Sans", sans-serif'}}>
+                      {filter.title}
                   </Typography>
                 </div>
               </AccordionSummary>
               <AccordionDetails sx={{
-                paddingTop: 0,
-                paddingBottom: "0.5rem",
-                paddingLeft: "0.5rem",
-                paddingRight: "0.5rem",
-                flex: "1 1 auto",
-                overflowY: "hidden",
-                color: "#1F1F1F",
-                fontWeight: "400",
-                fontSize: "0.75rem",
+                padding: '0 0 8px 20px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                color: mode === 'dark' ? '#e3e3e3' : '#1F1F1F',
+                fontWeight: '400',
               }}>
                 {
-                  (filter.title === 'Assets' || filter.title === 'Products' || filter.title === 'Glossaries' ?
+                  (filter.title === 'Assets' || filter.title === 'Products' ?
                     filter.items :
-                    filter.items.slice(0, 20)
-                  ).map((item: any) => (
-                    <div key={`${filter.title}-${item.name}`} style={{
+                    filter.items.slice(0, 10)
+                  ).map((item:any, index: number) => (
+                    <Box key={`${filter.title}-${item.name}-${index}`} sx={{
                       display: 'flex',
                       alignItems: 'center',
-                      justifyContent: 'space-between',
-                      position: 'relative',
-                      flex: "0 0 auto",
-                      marginBottom: '0.125rem',
+                      width: '100%',
+                      height: '24px',
+                      gap: '8px',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      px: '4px',
+                      '&:hover': {
+                        backgroundColor: mode === 'dark' ? '#3c4043' : '#E7F0FE',
+                      },
                     }}>
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        flex: '1 1 auto',
-                        paddingLeft: '0.45rem',
-                      }}>
-                        <FormControlLabel
-                          control={
-                            <Checkbox
-                              checked={selectedFilters.some(i => i.name === item.name && i.type === item.type)}
-                              icon={
-                                <Box sx={{
-                                  width: '16px',
-                                  height: '16px',
-                                  borderRadius: '4px',
-                                  border: '2px solid var(--Text-Secondary, #575757)',
-                                  opacity: 1,
-                                }} />
-                              }
-                              checkedIcon={
-                                <Box sx={{
-                                  width: '16px',
-                                  height: '16px',
-                                  borderRadius: '4px',
-                                  border: '2px solid #0E4DCA',
-                                  backgroundColor: '#0E4DCA',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                }}>
-                                  <CheckIcon sx={{ fontSize: '14px', color: '#FFFFFF' }} />
-                                </Box>
-                              }
-                              sx={{
-                                padding: '0.25rem',
-                                marginRight: '8px',
-                                '& .MuiSvgIcon-root': {
-                                  width: '18px',
-                                  height: '18px',
-                                },
-                              }}
-                            />}
-                          label={
-                            <div style={{
+                      <FormControlLabel
+                        control={
+                        <Checkbox
+                          checked={selectedFilters.some(i => i.name === item.name && i.type === item.type)}
+                          icon={
+                            <Box sx={{
+                              width: '16px',
+                              height: '16px',
+                              borderRadius: '4px',
+                              border: `2px solid ${mode === 'dark' ? '#9aa0a6' : '#575757'}`,
+                            }} />
+                          }
+                          checkedIcon={
+                            <Box sx={{
+                              width: '16px',
+                              height: '16px',
+                              borderRadius: '4px',
+                              border: `2px solid ${mode === 'dark' ? '#8ab4f8' : '#0E4DCA'}`,
+                              backgroundColor: mode === 'dark' ? '#8ab4f8' : '#0E4DCA',
                               display: 'flex',
                               alignItems: 'center',
-                              gap: '0.25rem',
-                              flex: '1 1 auto'
+                              justifyContent: 'center',
                             }}>
-                              {filter.title === 'Products' && getProductIcon(item.name) && (
-                                <img
-                                  src={getProductIcon(item.name)!}
-                                  alt={item.name}
-                                  style={{ width: '1.25rem', height: '1.25rem', flex: '0 0 auto' }}
-                                />
-                              )}
-                              {filter.title === 'Assets' && getAssetIcon(item.name) && (
-                                <img
-                                  src={getAssetIcon(item.name)!}
-                                  alt={item.name}
-                                  style={{ width: '1.25rem', height: '1.25rem', flex: '0 0 auto' }}
-                                />
-                              )}
-                              {(filter.title === 'Glossaries' || (filter.title === 'Assets' && (item.name.toLowerCase().includes('glossary')))) && (
-                                <img
-                                  src={GlossaryIcon}
-                                  alt={item.name}
-                                  style={{ width: '1.25rem', height: '1.25rem', flex: '0 0 auto' }}
-                                />
-                              )}
+                              <CheckIcon sx={{ fontSize: '14px', color: mode === 'dark' ? '#1e1f20' : '#FFFFFF' }} />
+                            </Box>
+                          }
+                          sx={{
+                            padding: '8px',
+                            '& .MuiSvgIcon-root': {
+                              width: '18px',
+                              height: '18px',
+                            },
+                          }}
+                        />}
+                        label={
+                          <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            flex: '1 1 auto',
+                            overflow: 'hidden',
+                          }}>
+                            {filter.title === 'Products' && getProductIcon(item.name) && (
+                              <img
+                                src={getProductIcon(item.name)!}
+                                alt={item.name}
+                                style={{ width: '16px', height: '16px', flexShrink: 0 }}
+                              />
+                            )}
+                            {filter.title === 'Assets' && isGlossaryAssetType(item.name) && (
+                              getGlossaryMuiIcon(assetNameToGlossaryType(item.name), {
+                                size: '16px',
+                                color: '#4285F4',
+                              })
+                            )}
+                            {filter.title === 'Assets' && !isGlossaryAssetType(item.name) && getAssetIcon(item.name) && (
+                              <img
+                                src={item.name === 'Database schema' ? DatabaseSchemaBlueIcon : getAssetIcon(item.name)!}
+                                alt={item.name}
+                                style={{ width: '16px', height: '16px', flexShrink: 0 }}
+                              />
+                            )}
+                            <Tooltip title={item.name} disableHoverListener={item.name.length <= 20} arrow placement="top">
                               <span style={{
                                 flex: '1 1 auto',
                                 overflow: 'hidden',
                                 textOverflow: 'ellipsis',
                                 whiteSpace: 'nowrap',
-                                maxWidth: '8rem',
-                                fontSize: '0.75rem',
-                                color: '#1F1F1F',
+                                fontSize: '12px',
+                                lineHeight: '16px',
+                                color: mode === 'dark' ? '#e3e3e3' : '#1F1F1F',
                                 fontWeight: '400',
+                                fontFamily: '"Product Sans", sans-serif',
                               }}>
                                 {item.name}
                               </span>
-                            </div>
-                          }
-                          sx={{
-                            '& .MuiFormControlLabel-label': {
-                              fontWeight: '500',
-                              color: '#4c4c4c',
-                              fontSize: '0.75rem',
-                              display: 'flex',
-                              alignItems: 'center'
-                            }
-                          }}
-                          onChange={() => handleCheckboxChange(item)}
-                          style={{ flex: '1 1 auto' }}
-                        />
-                      </div>
+                            </Tooltip>
+                          </div>
+                        }
+                        sx={{
+                          margin: 0,
+                          flex: '1 1 auto',
+                          minWidth: 0,
+                          overflow: 'hidden',
+                          '& .MuiFormControlLabel-label': {
+                            flex: '1 1 auto',
+                            minWidth: 0,
+                            display: 'flex',
+                            alignItems: 'center',
+                            overflow: 'hidden',
+                          },
+                        }}
+                        onChange={() => handleCheckboxChange(item)}
+                      />
                       {filter.title === 'Aspects' && (
-                        <img
-                          src={EditNoteIcon}
-                          alt="Edit Note"
-                          style={{
-                            width: '1.25rem',
-                            height: '1.25rem',
-                            position: 'absolute',
-                            right: 0,
-                            top: '50%',
-                            transform: 'translateY(-50%)',
-                            cursor: 'pointer'
+                        <EditNoteOutlinedIcon
+                          data-testid="edit-note-icon"
+                          sx={{ fontSize: '16px', color: mode === 'dark' ? '#9aa0a6' : '#575757', cursor: 'pointer', flexShrink: 0 }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleEditNoteClick(item.name, item.data, e);
                           }}
-                          onClick={(e) => handleEditNoteClick(item.name, item.data, e)}
                         />
                       )}
-                    </div>
+                    </Box>
                   ))
                 }
-                {filter.items.length > 20 && filter.title !== 'Assets' && filter.title !== 'Products' && (
-                  <Button
-                    onClick={(e) => handleSeeMoreClick(filter.title, e)}
-                    sx={{
-                      textTransform: 'none',
-                      color: '#0E4DCA',
-                      fontSize: '0.75rem',
-                      fontWeight: 500,
-                      padding: '4px 8px',
-                      marginLeft: '28px',
-                      '&:hover': {
-                        backgroundColor: 'rgba(14, 77, 202, 0.04)',
-                      }
-                    }}
-                  >
-                    See {filter.items.length - 20} more
-                  </Button>
+                {(filter.title !== 'Assets' && filter.title !== 'Products' && filter.items.length > 10) && (
+                  <div style={{
+                    display: 'flex',
+                    justifyContent: 'flex-start',
+                    padding: 0,
+                    marginTop: '4px',
+                  }}>
+                    <Button
+                      onClick={(e) => handleViewAllItems(filter.title, e)}
+                      sx={{
+                        color: mode === 'dark' ? '#8ab4f8' : '#0B57D0',
+                        fontSize: '12px',
+                        fontWeight: '400',
+                        fontFamily: '"Product Sans", sans-serif',
+                        lineHeight: '16px',
+                        letterSpacing: '0.1px',
+                        textTransform: 'none',
+                        padding: '0',
+                        paddingLeft: '12px',
+                        minWidth: 'auto',
+                        justifyContent: 'flex-start',
+                        '&:hover': {
+                          backgroundColor: 'transparent',
+                          textDecoration: 'underline',
+                        },
+                      }}
+                    >
+                      Show more
+                    </Button>
+                  </div>
                 )}
               </AccordionDetails>
             </Accordion>
-          ))}
-        </div>
-      </Box >
+          )
+        )}
+      </div>
 
-      {showMultiSelect && (
-        <FilterAnnotationsMultiSelect
-          isOpen={showMultiSelect}
-          onClose={handleCloseMultiSelect}
-          filterType={currentFilterType}
-          options={filterData.find((f: any) => f.title === currentFilterType)?.items.map((item: any) => item.name) || []}
-          value={selectedFilters.filter(f => f.type === (filterData.find((fd: any) => fd.title === currentFilterType)?.items[0]?.type)).map(f => f.name)}
-          onChange={handleMultiSelectChange}
-          position={multiselectPosition}
+       {/* Other Accordions for different filter types */}
+
+
+    {/* MultiSelect Modal for all filter types */}
+    {showMultiSelect && currentFilterType && multiselectPosition && (
+      <FilterAnnotationsMultiSelect
+        options={filterData.find((f:any) => f.title === currentFilterType)?.items.map((item:any) => item.name) || []}
+        value={selectedFilters.filter((sf:any) => sf.type === (filterData.find((f:any) => f.title === currentFilterType)?.items[0]?.type || 'typeAliases')).map((sf:any) => sf.name)}
+        onChange={handleMultiSelectChange}
+        onClose={handleCloseMultiSelect}
+        isOpen={showMultiSelect}
+        filterType={currentFilterType}
+        position={multiselectPosition}
+        onEditNote={(optionName, iconTop, modalRight) => {
+          const currentFilter = filterData.find((f: { title: string }) => f.title === currentFilterType);
+          const item = currentFilter?.items.find((i: { name: string }) => i.name === optionName);
+          if (item) {
+            setSelectedAnnotationForSubPanel(item.name);
+            setSubAnnotationData([]);
+            setSubAnnotationsloaded(false);
+            getSubAnnotationsForAnnotation(item.data);
+            const existingFilter = selectedFilters.find(filter =>
+              filter.name === item.name && filter.type === 'aspectType'
+            );
+            setSelectedSubAnnotations(existingFilter?.subAnnotationData ?? []);
+            setClickPosition({ top: iconTop, right: modalRight });
+            setShowSubAnnotationsPanel(true);
+          }
+        }}
+      />
+    )}
+
+      {/* Sub-Annotations Panel */}
+      {showSubAnnotationsPanel && (
+        <FilterSubAnnotationsPanel
+          annotationName={selectedAnnotationForSubPanel}
+          subAnnotations={subAnnotationData}
+          subAnnotationsloader={!subAnnotationsloaded}
+          selectedSubAnnotations={selectedSubAnnotations}
+          onSubAnnotationsChange={handleSubAnnotationsChange}
+          onSubAnnotationsApply={handleSubAnnotationsApply}
+          onClose={handleCloseSubAnnotationsPanel}
+          isOpen={showSubAnnotationsPanel}
+          clickPosition={clickPosition}
         />
-      )
-      }
-
-      {
-        showSubAnnotationsPanel && (
-          <FilterSubAnnotationsPanel
-            isOpen={showSubAnnotationsPanel}
-            onClose={handleCloseSubAnnotationsPanel}
-            annotationName={selectedAnnotationForSubPanel}
-            subAnnotations={subAnnotationData}
-            selectedSubAnnotations={selectedSubAnnotations}
-            subAnnotationsloader={!subAnnotationsloaded}
-            onSubAnnotationsChange={handleSubAnnotationsChange}
-            onSubAnnotationsApply={handleSubAnnotationsApply}
-            clickPosition={clickPosition}
-          />
-        )
-      }
-    </>
-  );
-};
+      )}
+    </Box>
+    </Box>
+  ) : (<></>);
+}
 
 export default FilterDropdown;
