@@ -3714,6 +3714,72 @@ Return JSON: {"dataplexQuery": "your optimized query string"}`;
       }
     }
 
+    // --- BIGQUERY INFORMATION_SCHEMA FALLBACK ---
+    // If Dataplex returned 0 results (catalog not accessible or not set up),
+    // fall back to BigQuery INFORMATION_SCHEMA so users can always discover tables.
+    if (searchResults.length === 0 && query && query !== '*') {
+      console.log(`[SEARCH][BQ-FALLBACK] Dataplex returned 0 results. Falling back to BigQuery INFORMATION_SCHEMA for query: "${query}"`);
+      try {
+        const bq = new BigQuery({ projectId: PROJECT_ID });
+        const bqFallbackResults = [];
+
+        for (const projId of allProjects) {
+          try {
+            // List all datasets in the project first
+            const [datasets] = await bq.getDatasets({ projectId: projId });
+            console.log(`[SEARCH][BQ-FALLBACK] Found ${datasets.length} datasets in project ${projId}`);
+
+            for (const dataset of datasets) {
+              try {
+                const datasetId = dataset.id;
+                const [tables] = await dataset.getTables();
+                for (const table of tables) {
+                  const tableId = table.id;
+                  const fqn = `bigquery:${projId}.${datasetId}.${tableId}`;
+                  const entryName = `projects/${projId}/locations/us/entryGroups/@bigquery/entries/${projId}_${datasetId}_${tableId}`;
+
+                  // Filter by query string (case-insensitive match on table or dataset name)
+                  const queryLower = query.toLowerCase();
+                  if (
+                    tableId.toLowerCase().includes(queryLower) ||
+                    datasetId.toLowerCase().includes(queryLower) ||
+                    fqn.toLowerCase().includes(queryLower)
+                  ) {
+                    bqFallbackResults.push({
+                      name: entryName,
+                      displayName: tableId,
+                      description: `BigQuery table in dataset ${datasetId}`,
+                      fullyQualifiedName: fqn,
+                      entrySource: {
+                        displayName: tableId,
+                        description: `BigQuery table in dataset ${datasetId}`,
+                        system: 'BIGQUERY',
+                        location: 'europe-west1',
+                      },
+                      entryType: 'Table',
+                      location: 'europe-west1',
+                    });
+                  }
+                }
+              } catch (tableErr) {
+                console.warn(`[SEARCH][BQ-FALLBACK] Failed to list tables for dataset ${dataset.id}:`, tableErr.message);
+              }
+            }
+          } catch (dsErr) {
+            console.warn(`[SEARCH][BQ-FALLBACK] Failed to list datasets for project ${projId}:`, dsErr.message);
+          }
+        }
+
+        if (bqFallbackResults.length > 0) {
+          console.log(`[SEARCH][BQ-FALLBACK] Found ${bqFallbackResults.length} matching tables via BigQuery API`);
+          searchResults = bqFallbackResults;
+        } else {
+          console.log(`[SEARCH][BQ-FALLBACK] No matching tables found in BigQuery either`);
+        }
+      } catch (bqErr) {
+        console.warn(`[SEARCH][BQ-FALLBACK] BigQuery fallback failed:`, bqErr.message);
+      }
+    }
 
     // Dataplex native semantic search already returns results ordered by relevance
     // No additional AI ranking needed - this was causing slow performance

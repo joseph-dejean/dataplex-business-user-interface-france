@@ -73,14 +73,6 @@ const GlobalSidebar: React.FC = () => {
           onClick={() => navigate('/access-requests')}
         />
 
-        {user?.isAdmin && (
-          <SidebarMenuItem
-            icon={SIDEBAR_ICONS.ADMIN}
-            label="Admin"
-            isActive={location.pathname.startsWith('/admin')}
-            onClick={() => navigate('/admin-access')}
-          />
-        )}
       </div>
 
       {/* Dark Mode Toggle */}
