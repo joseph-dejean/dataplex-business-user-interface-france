@@ -4635,22 +4635,32 @@ app.get('/api/v1/check-entry-access', async (req, res) => {
       return res.json({ hasAccess: true, level: 'super_admin' });
     }
 
-    // Extract project from entryName path: projects/{project}/locations/...
+    // Extract the real BigQuery project and dataset from the entry name.
+    // Entry names look like:
+    //   projects/{cloudRunProject}/locations/eu/entryGroups/@bigquery/entries/bigquery.googleapis.com/projects/{bqProject}/datasets/{ds}/tables/{t}
+    // OR URL-encoded:
+    //   projects/{cloudRunProject}/locations/eu/entryGroups/@bigquery/entries/bigquery.googleapis.com%2Fprojects%2F{bqProject}%2Fdatasets%2F{ds}
+    // We must use the BQ project embedded AFTER 'entries/', not the outer path project.
     const nameParts = entryName.split('/');
-    const projectIndex = nameParts.indexOf('projects');
-    let targetProject = projectIndex !== -1 ? nameParts[projectIndex + 1] : null;
-
-    // Try to extract dataset from URL-encoded entry ID
-    // Entry IDs for BigQuery tables are often:
-    //   bigquery.googleapis.com%2Fprojects%2FP%2Fdatasets%2FDS%2Ftables%2FT
     const entriesIndex = nameParts.indexOf('entries');
+    let targetProject = null;
     let datasetId = null;
-    if (entriesIndex !== -1 && nameParts[entriesIndex + 1]) {
-      const entryId = decodeURIComponent(nameParts[entriesIndex + 1]);
-      const dsMatch = entryId.match(/datasets\/([^/]+)\//);
+
+    if (entriesIndex !== -1) {
+      // Reconstruct everything after 'entries/' and decode
+      const entryId = decodeURIComponent(nameParts.slice(entriesIndex + 1).join('/'));
+      // Extract project from inside the entry ID (the actual BQ project)
+      const projMatch = entryId.match(/projects\/([^/]+)/);
+      if (projMatch) targetProject = projMatch[1];
+      // Extract dataset
+      const dsMatch = entryId.match(/datasets\/([^/]+)/);
       if (dsMatch) datasetId = dsMatch[1];
-      const projMatch = entryId.match(/projects\/([^/]+)\//);
-      if (projMatch && !targetProject) targetProject = projMatch[1];
+    }
+
+    // Fallback: use the outer path project if entry ID parsing failed
+    if (!targetProject) {
+      const projectIndex = nameParts.indexOf('projects');
+      targetProject = projectIndex !== -1 ? nameParts[projectIndex + 1] : null;
     }
 
     if (!targetProject) {
