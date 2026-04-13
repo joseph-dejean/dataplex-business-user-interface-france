@@ -51,6 +51,12 @@ export const URLS = {
     UPDATE_ENTRY_ASPECTS: '/update-entry-aspects',
     LINEAGE_SEARCH_COLUMN_LEVEL: '/lineage-column-level',
     DATASET_RELATIONSHIPS: '/dataset-relationships',
+    CHECK_ENTRY_ACCESS: '/check-entry-access',
+    GET_SCAN_JOBS: '/get-data-scan-jobs',
+
+    // ServiceNow
+    SERVICENOW_TICKET_STATUS: '/servicenow/ticket', // + /:requestId
+    SERVICENOW_OPEN_TICKETS: '/servicenow/open-tickets',
 
     // Admin Role Management
     ADMIN_CHECK: '/admin/check',

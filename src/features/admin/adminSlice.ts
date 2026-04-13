@@ -59,6 +59,9 @@ export interface PersistentNotification {
 interface AdminState {
   currentUserRole: AdminRole | null;
   isAdmin: boolean;
+  isDataOwner: boolean;
+  ownedDatasets: { projectId: string; datasetId: string }[];
+  hasAdminCapabilities: boolean;
   allAdmins: AdminRole[];
   pendingRequests: AccessRequest[];
   grantedAccesses: GrantedAccess[];
@@ -71,6 +74,9 @@ interface AdminState {
 const initialState: AdminState = {
   currentUserRole: null,
   isAdmin: false,
+  isDataOwner: false,
+  ownedDatasets: [],
+  hasAdminCapabilities: false,
   allAdmins: [],
   pendingRequests: [],
   grantedAccesses: [],
@@ -368,6 +374,9 @@ export const adminSlice = createSlice({
     clearAdminState: (state) => {
       state.currentUserRole = null;
       state.isAdmin = false;
+      state.isDataOwner = false;
+      state.ownedDatasets = [];
+      state.hasAdminCapabilities = false;
       state.allAdmins = [];
       state.pendingRequests = [];
       state.grantedAccesses = [];
@@ -389,6 +398,9 @@ export const adminSlice = createSlice({
       .addCase(checkAdminStatus.fulfilled, (state, action) => {
         state.status = 'succeeded';
         state.isAdmin = action.payload.isAdmin;
+        state.isDataOwner = action.payload.isDataOwner || false;
+        state.ownedDatasets = action.payload.ownedDatasets || [];
+        state.hasAdminCapabilities = action.payload.hasAdminCapabilities || action.payload.isAdmin;
         state.currentUserRole = action.payload.role;
       })
       .addCase(checkAdminStatus.rejected, (state, action) => {

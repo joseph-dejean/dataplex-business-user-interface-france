@@ -4,6 +4,14 @@ import { AxiosError } from 'axios';
 let globalShowError: (message: string, duration?: number) => void;
 let globalLogout: () => void;
 
+// Flag to prevent duplicate notifications
+let authNotificationShown = false;
+
+export const isAuthNotificationShown = () => authNotificationShown;
+export const setAuthNotificationShown = (shown: boolean) => {
+  authNotificationShown = shown;
+};
+
 export const setGlobalAuthFunctions = (
   showError: (message: string, duration?: number) => void,
   logout: () => void
@@ -12,20 +20,40 @@ export const setGlobalAuthFunctions = (
   globalLogout = logout;
 };
 
-// Check if error is an authentication error - ONLY HTTP 401
+// Check if error is an authentication error
 export const isAuthenticationError = (error: AxiosError | unknown): boolean => {
-  // Only treat HTTP 401 as an authentication error.
-  // Other codes (403, 500) should NOT trigger logout - they indicate
-  // server errors or permission issues, not expired sessions.
-  return (error as AxiosError)?.response?.status === 401;
+  // Check for HTTP status codes
+  if ((error as AxiosError)?.response?.status === 401 ) { // || (error as AxiosError)?.response?.status === 403
+    return true;
+  }
+
+  // Check for specific error messages in response data
+  const errorData = (error as AxiosError)?.response?.data || error;
+  if (errorData && typeof errorData === 'object') {
+    const message = (errorData as any).message || (errorData as any).details || '';
+    const messageStr = message.toString().toLowerCase();
+    
+    return (
+      messageStr.includes('unauthenticated') ||
+      messageStr.includes('invalid authentication') ||
+      messageStr.includes('authentication credentials') ||
+      messageStr.includes('access token') ||
+      messageStr.includes('login cookie') ||
+      messageStr.includes('oauth 2') ||
+      messageStr.includes('unauthorized')
+    );
+  }
+
+  return false;
 };
 
 // Handle authentication error with notification and redirect
 export const handleAuthenticationError = (error?: AxiosError | unknown) => {
   console.log('Authentication error detected:', (error as AxiosError)?.response?.data || error);
 
-  // Show notification
-  if (globalShowError) {
+  // Only show notification once
+  if (globalShowError && !authNotificationShown) {
+    authNotificationShown = true;
     globalShowError('Your session has expired. You will be redirected to the login page.', 5000);
   }
 

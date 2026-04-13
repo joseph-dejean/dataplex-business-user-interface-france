@@ -1,78 +1,20 @@
 /* Global Sidebar Styles */
 
 .global-sidebar {
-  width: 64px;
-  min-width: 64px;
-  max-width: 64px;
+  width: 96px;
+  min-width: 96px;
+  max-width: 96px;
+  height: 100vh;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 8px 0 0;
-  gap: 16px;
-  background-color: #F8FAFD;
+  padding: 24px 0;
+  gap: 8px;
+  background-color: var(--sys-surface-container-high);
   box-sizing: border-box;
+  position: relative;
   z-index: 1200;
-}
-
-/* Full height sidebar for non-home routes */
-.global-sidebar.full-height {
-  height: 100vh;
-}
-
-/* Partial height sidebar for home route (below navbar) */
-.global-sidebar.partial-height {
-  height: calc(100vh - 64px);
-}
-
-/* Logo Area */
-.sidebar-logo-container {
-  width: 64px;
-  min-height: 64px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 8px 2px;
-  margin-left: 0;
-  gap: 4px;
-  cursor: pointer;
-  box-sizing: border-box;
-}
-
-.logo-icon-only {
-  width: 24px;
-  height: 24px;
-  object-fit: contain;
-}
-
-/* Text container for logo area */
-.sidebar-logo-text {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0;
-}
-
-/* Dataplex title */
-.sidebar-logo-title {
-  font-family: 'Google Sans', sans-serif;
-  font-weight: 600;
-  font-size: 10px;
-  color: #0B57D0;
-  text-align: center;
-  line-height: 1.2;
-}
-
-/* Catalog France Practice label */
-.sidebar-practice-label {
-  font-family: 'Google Sans', sans-serif;
-  font-weight: 500;
-  font-size: 7px;
-  color: #0B57D0;
-  text-align: center;
-  line-height: 1.2;
-  white-space: nowrap;
 }
 
 /* Menu Items Container */
@@ -80,18 +22,28 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 20px;
+  gap: 23px;
+  width: 100%;
+  flex: 1;
+}
+
+/* Bottom section for dark mode toggle */
+.sidebar-bottom-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 0 16px;
   width: 100%;
 }
 
 /* Individual Menu Item */
 .sidebar-menu-item {
-  width: 64px;
+  width: 96px;
   display: flex;
   flex-direction: column;
   align-items: center;
   padding: 0;
-  gap: 4px;
+  gap: 7px;
   cursor: pointer;
   transition: background-color 0.2s ease;
   box-sizing: border-box;
@@ -109,45 +61,26 @@
 
 /* Icon container (pill shape) */
 .menu-icon-container {
-  width: 44px;
+  width: 56px;
   height: 32px;
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  padding: 6px 12px;
+  padding: 4px 12px;
   gap: 6px;
   border-radius: 1000px;
   transition: background-color 0.2s ease;
   box-sizing: border-box;
 }
 
-/* Ensure img icons are visible and properly sized */
-.menu-icon-container img {
-  width: 20px;
-  height: 20px;
-  object-fit: contain;
-  display: block;
-}
-
-/* SVG icons inside container */
-.menu-icon-container svg {
-  width: 20px;
-  height: 20px;
-}
-
 /* Active state */
 .sidebar-menu-item.active .menu-icon-container {
-  background-color: #E7F0FE;
-}
-
-.sidebar-menu-item.active .menu-icon-container svg {
-  color: #0E4DCA;
-  fill: #0E4DCA;
+  background-color: var(--sys-primary-container);
 }
 
 .sidebar-menu-item.active .menu-label {
-  color: #1F1F1F;
+  color: var(--sys-on-secondary-fixed);
 }
 
 /* Inactive state */
@@ -155,33 +88,46 @@
   background-color: transparent;
 }
 
-.sidebar-menu-item:not(.active) .menu-icon-container svg {
-  color: #575757;
-  fill: #575757;
-}
-
 /* Hover state (inactive items) */
 .sidebar-menu-item:not(.active):not(.disabled):hover .menu-icon-container {
-  background-color: rgba(0, 0, 0, 0.04);
+  background-color: color-mix(in srgb, var(--sys-on-surface) 4%, transparent);
+}
+
+/* Material Symbols icon */
+.sidebar-icon {
+  font-size: 24px;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  color: var(--sys-on-surface-variant);
+  transition: font-variation-settings 0.3s ease, transform 0.2s ease;
+}
+
+/* Hover: enlarge + fill */
+.sidebar-menu-item:not(.active):not(.disabled):hover .sidebar-icon {
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  transform: scale(1.10);
+}
+
+/* Active: filled icon */
+.sidebar-menu-item.active .sidebar-icon {
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  color: var(--sys-on-secondary-fixed);
+  transform: scale(1.10);
 }
 
 /* Menu label */
 .menu-label {
-  width: 64px;
+  width: 96px;
   font-family: 'Google Sans', sans-serif;
   font-style: normal;
-  font-weight: 500;
-  font-size: 10px;
-  line-height: 12px;
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 16px;
   display: flex;
   align-items: center;
   text-align: center;
   justify-content: center;
   letter-spacing: 0.1px;
-  color: #575757;
-  flex-wrap: wrap;
-  word-break: break-word;
-  hyphens: none;
+  color: var(--sys-on-surface-variant);
 }
 
 /* Disabled state */
@@ -194,13 +140,8 @@
   background-color: transparent;
 }
 
-.sidebar-menu-item.disabled .menu-icon-container svg {
-  color: #575757;
-  fill: #575757;
-}
-
 .sidebar-menu-item.disabled .menu-label {
-  color: #575757;
+  color: var(--sys-on-surface-variant);
 }
 
 /* Responsive: Hide sidebar on mobile */
@@ -213,7 +154,7 @@
 /* Tablet adjustments */
 @media (max-width: 1024px) and (min-width: 769px) {
   .global-sidebar {
-    width: 64px;
-    min-width: 64px;
+    width: 96px;
+    min-width: 96px;
   }
 }

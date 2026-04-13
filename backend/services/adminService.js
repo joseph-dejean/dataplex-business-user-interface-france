@@ -1,5 +1,6 @@
 const { Firestore } = require('@google-cloud/firestore');
 const { CatalogServiceClient } = require('@google-cloud/dataplex');
+const { BigQuery } = require('@google-cloud/bigquery');
 
 // Lazy Firestore initialization to avoid blocking server startup
 // Auto-detects project from Cloud Run environment (GOOGLE_CLOUD_PROJECT is set automatically by Cloud Run)
@@ -274,6 +275,103 @@ const removeProjectFromAdmin = async (email, projectId) => {
 };
 
 /**
+ * Check if a user is a data owner (has OWNER role) on a specific BigQuery dataset
+ * @param {string} email - User email
+ * @param {string} projectId - GCP Project ID
+ * @param {string} datasetId - BigQuery Dataset ID
+ * @returns {boolean}
+ */
+const isDatasetOwner = async (email, projectId, datasetId) => {
+    if (!email || !projectId || !datasetId) return false;
+
+    try {
+        const bigquery = new BigQuery({ projectId });
+        const dataset = bigquery.dataset(datasetId);
+        const [metadata] = await dataset.getMetadata();
+        const access = metadata.access || [];
+
+        // Check if user has OWNER role on this dataset
+        const isOwner = access.some(entry =>
+            entry.userByEmail?.toLowerCase() === email.toLowerCase() &&
+            entry.role === 'OWNER'
+        );
+
+        if (isOwner) {
+            console.log(`[ADMIN-RESOLVE] User ${email} is data owner on ${projectId}.${datasetId}`);
+        }
+
+        return isOwner;
+    } catch (err) {
+        console.warn(`[ADMIN-RESOLVE] Dataset owner check failed for ${email} on ${projectId}.${datasetId}:`, err.message);
+        return false;
+    }
+};
+
+/**
+ * Check if user can manage access for a specific dataset (is admin OR data owner)
+ * @param {string} email - User email
+ * @param {string} projectId - GCP Project ID
+ * @param {string} datasetId - BigQuery Dataset ID (optional)
+ * @returns {boolean}
+ */
+const canManageDatasetAccess = async (email, projectId, datasetId = null) => {
+    // First check if user is a regular admin (super-admin or project-admin)
+    const isAdminUser = await isProjectAdmin(email, projectId);
+    if (isAdminUser) return true;
+
+    // If datasetId provided, check if user is data owner
+    if (datasetId) {
+        const isOwner = await isDatasetOwner(email, projectId, datasetId);
+        if (isOwner) return true;
+    }
+
+    return false;
+};
+
+/**
+ * Get all datasets where user is OWNER (for showing relevant access requests)
+ * @param {string} email - User email
+ * @param {string[]} projectIds - List of project IDs to check
+ * @returns {Array<{projectId: string, datasetId: string}>}
+ */
+const getOwnedDatasets = async (email, projectIds) => {
+    const ownedDatasets = [];
+
+    for (const projectId of projectIds) {
+        try {
+            const bigquery = new BigQuery({ projectId });
+            const [datasets] = await bigquery.getDatasets();
+
+            for (const dataset of datasets) {
+                try {
+                    const [metadata] = await dataset.getMetadata();
+                    const access = metadata.access || [];
+
+                    const isOwner = access.some(entry =>
+                        entry.userByEmail?.toLowerCase() === email.toLowerCase() &&
+                        entry.role === 'OWNER'
+                    );
+
+                    if (isOwner) {
+                        ownedDatasets.push({
+                            projectId: projectId,
+                            datasetId: dataset.id
+                        });
+                    }
+                } catch (err) {
+                    // Skip datasets we can't read metadata for
+                }
+            }
+        } catch (err) {
+            console.warn(`[ADMIN-RESOLVE] Could not list datasets in ${projectId}:`, err.message);
+        }
+    }
+
+    console.log(`[ADMIN-RESOLVE] User ${email} owns ${ownedDatasets.length} datasets`);
+    return ownedDatasets;
+};
+
+/**
  * Helper: Check if a user is a Data Steward in Dataplex Catalog
  * Searches for any entries where this user is listed in the contacts aspect.
  */
@@ -385,5 +483,9 @@ module.exports = {
     getProjectAdmins,
     addProjectToAdmin,
     removeProjectFromAdmin,
-    resolveAdminRole
+    resolveAdminRole,
+    // Data owner functions
+    isDatasetOwner,
+    canManageDatasetAccess,
+    getOwnedDatasets
 };

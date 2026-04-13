@@ -6,6 +6,22 @@ const { VertexAI } = require('@google-cloud/vertexai');
 const express = require('express');
 const fs = require('fs').promises;
 const { GoogleAuth, OAuth2Client } = require('google-auth-library');
+
+// Allows passing a user's OAuth token directly to Dataplex for native semantic search
+class CustomGoogleAuth extends GoogleAuth {
+  constructor(token) {
+    super();
+    this.token = token;
+  }
+  async getClient() {
+    const client = new OAuth2Client();
+    client.setCredentials({ access_token: this.token });
+    return client;
+  }
+  async getUniverseDomain() {
+    return 'googleapis.com';
+  }
+}
 const { google } = require('googleapis');
 console.log('[STARTUP] Loading Google Cloud clients...');
 const { CatalogServiceClient, DataScanServiceClient, protos, DataplexServiceClient } = require('@google-cloud/dataplex');
@@ -20,7 +36,7 @@ const authMiddleware = require('./middlewares/authMiddleware');
 const { querySampleFromBigQuery } = require('./utility');
 const { sendAccessRequestEmail, sendApprovalEmail, sendRejectionEmail, sendFeedbackEmail } = require('./services/emailService');
 const { createAccessRequest, getAccessRequests, updateAccessRequestStatus, getAccessRequestById } = require('./services/accessRequestService');
-const { grantIamAccess, revokeIamAccess, getIamBindings, verifyUserAccess } = require('./services/gcpIamService');
+const { grantDatasetAccess, revokeDatasetAccess, grantIamAccess, revokeIamAccess, getIamBindings, verifyUserAccess } = require('./services/gcpIamService');
 const adminService = require('./services/adminService');
 const grantedAccessService = require('./services/grantedAccessService');
 const notificationService = require('./services/notificationService');
@@ -45,6 +61,26 @@ if (!PROJECT_ID) {
 } else {
   console.log(`[STARTUP] Project ID resolved: ${PROJECT_ID}`);
 }
+
+// --- EXTERNAL PROJECTS ---
+// Parse external projects from environment variable (space or comma separated)
+const EXTERNAL_PROJECTS_RAW = process.env.EXTERNAL_PROJECTS || '';
+const EXTERNAL_PROJECTS = EXTERNAL_PROJECTS_RAW
+  .split(/[\s,]+/)
+  .map(p => p.trim())
+  .filter(p => p.length > 0 && p !== PROJECT_ID);
+
+if (EXTERNAL_PROJECTS.length > 0) {
+  console.log(`[STARTUP] External projects configured: ${EXTERNAL_PROJECTS.join(', ')}`);
+} else {
+  console.log('[STARTUP] No external projects configured');
+}
+
+// Get all searchable projects (main + external)
+const getAllProjects = () => {
+  const projects = [PROJECT_ID, ...EXTERNAL_PROJECTS].filter(p => p);
+  return [...new Set(projects)]; // Remove duplicates
+};
 
 // Helper function for consistent project ID access throughout the codebase
 const getProjectId = () => PROJECT_ID;
@@ -135,39 +171,53 @@ app.post('/api/v1/chat', async (req, res) => {
     // Format: bigquery://project.dataset.table or project:dataset.table
     let projectId, datasetId, tableId;
 
+    console.log('[CA_DEBUG] Step 1: Parsing FQN. Raw fullyQualifiedName:', context.fullyQualifiedName);
+
     if (context.fullyQualifiedName) {
       let fqn = context.fullyQualifiedName;
 
       // Handle "bigquery:" prefix (common in Dataplex FQNs)
       if (fqn.startsWith('bigquery:')) {
         fqn = fqn.substring(9); // Remove "bigquery:"
-        // Example now: dataplex-ui.coffee_shop.order_item
+        console.log('[CA_DEBUG] Removed bigquery: prefix. FQN now:', fqn);
       } else if (fqn.startsWith('bigquery://')) {
         fqn = fqn.replace('bigquery://', '');
+        console.log('[CA_DEBUG] Removed bigquery:// prefix. FQN now:', fqn);
+      } else {
+        console.log('[CA_DEBUG] No bigquery prefix found. FQN as-is:', fqn);
       }
 
       const parts = fqn.split('.');
+      console.log('[CA_DEBUG] Split by dot:', JSON.stringify(parts), 'Count:', parts.length);
       if (parts.length >= 3) {
         projectId = parts[0];
         datasetId = parts[1];
         tableId = parts[2];
+        console.log(`[CA_DEBUG] Parsed OK: project=${projectId}, dataset=${datasetId}, table=${tableId}`);
       } else if (fqn.includes(':') && !fqn.startsWith('bigquery:')) {
-        // Handle older format project:dataset.table if still used, but unlikely with new cleaning
+        // Handle older format project:dataset.table if still used
         const [project, rest] = fqn.split(':');
         projectId = project;
         const restParts = rest.split('.');
         if (restParts.length >= 2) {
           datasetId = restParts[0];
           tableId = restParts[1];
+          console.log(`[CA_DEBUG] Parsed colon format: project=${projectId}, dataset=${datasetId}, table=${tableId}`);
         }
+      } else {
+        console.log('[CA_DEBUG] Could not parse FQN - not enough parts');
       }
+    } else {
+      console.log('[CA_DEBUG] No fullyQualifiedName in context!');
     }
 
     // Check if this is a Data Product
     const isDataProduct = context.isDataProduct === true;
+    console.log('[CA_DEBUG] Step 2: isDataProduct:', isDataProduct, 'projectId:', projectId, 'datasetId:', datasetId, 'tableId:', tableId);
 
     // If we can't extract BigQuery reference, fall back to metadata-only mode
     if (!projectId || !datasetId || !tableId) {
+      console.log('[CA_DEBUG] FALLBACK: Missing project/dataset/table -> Using Vertex AI metadata-only mode');
       // Fallback: Use Vertex AI for non-BigQuery tables or when FQN is not available
       // Vertex AI requires a specific region (not multi-region like 'us'), default to europe-west1
       const vertexLocation = (process.env.GCP_LOCATION && process.env.GCP_LOCATION.includes('-')) ? process.env.GCP_LOCATION : 'europe-west1';
@@ -222,20 +272,29 @@ app.post('/api/v1/chat', async (req, res) => {
     }
 
     // Use Conversational Analytics API with inline context for BigQuery tables
-    const projectId_env = PROJECT_ID;
+    // Cross-project IS supported: use deployment project for billing/execution, table's project for data
+    // See: https://codelabs.developers.google.com/ca-api-bigquery
+    const deploymentProjectId = process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT_ID;
+    const tableProjectId = projectId; // The project where the table lives (for BigQueryTableReference)
+
     // CA API requires a specific region (not multi-region like 'us' or 'eu'), default to europe-west1
     const rawLocation = process.env.GCP_LOCATION || 'europe-west1';
     const location = rawLocation.includes('-') ? rawLocation : 'europe-west1';
 
-    if (!projectId_env) {
-      console.error('[CHAT] CRITICAL: No project ID found in environment variables!');
+    // Use deployment project for the API call (billing/execution), table references will specify their own projects
+    const caProjectId = deploymentProjectId || tableProjectId;
+
+    if (!caProjectId) {
+      console.error('[CHAT] CRITICAL: No project ID found for CA API call!');
       return res.status(200).json({
-        reply: "Configuration error: The server is not properly configured with a Google Cloud Project ID. Please contact your administrator.",
+        reply: "Could not determine the project for this table. The table's fully qualified name may be invalid.",
         error: true
       });
     }
 
-    const chatUrl = `https://geminidataanalytics.googleapis.com/v1beta/projects/${projectId_env}/locations/${location}:chat`;
+    console.log(`[CA_DEBUG] Using deployment project for CA API billing: ${caProjectId}`);
+    console.log(`[CA_DEBUG] Table's project for data access: ${tableProjectId}`);
+    const chatUrl = `https://geminidataanalytics.googleapis.com/v1beta/projects/${caProjectId}/locations/${location}:chat`;
 
     // Build BigQuery data source reference
     // For Data Products, include all tables; for single tables, include just that table
@@ -347,24 +406,25 @@ app.post('/api/v1/chat', async (req, res) => {
 
     const systemInstruction = 'You are a helpful Data Steward assistant for Dataplex. Answer questions about the data tables based on their schema and metadata. Be concise and accurate.';
 
-    // Use ADC (service account) token for CA API - the user's OAuth token lacks the cloud-platform scope
-    // needed by geminidataanalytics.googleapis.com. The service account has the proper IAM roles.
+    // Use ADC (service account) for CA API - user OAuth tokens don't have the required scope
+    // The service account needs geminidataanalytics roles on the target project
+    console.log('[CA_DEBUG] Step 3: Getting ADC token for CA API...');
     const adcAuth = new AdcGoogleAuth();
     const adcClient = await adcAuth.getClient();
-    const adcToken = (await adcClient.getAccessToken()).token;
-    const adcEmail = adcClient.email || 'unknown';
-    console.log(`Using ADC service account token for CA API call (SA: ${adcEmail}, location: ${location})`);
+    const caToken = (await adcClient.getAccessToken()).token;
+    console.log(`Using service account for CA API call (location: ${location})`);
 
     let chatPayload;
     const existingConversationId = context.conversationId; // From frontend state
 
     // Try to create/get a persistent Data Agent for better performance and caching
+    // Use the TABLE's project for DataAgent creation (same project requirement as CA API)
     let dataAgentName = null;
     try {
       dataAgentName = await getOrCreateDataAgent(tableReferences, systemInstruction, {
-        projectId: projectId_env,
+        projectId: caProjectId,
         location: location,
-        accessToken: adcToken
+        accessToken: caToken
       });
       if (dataAgentName) {
         console.log(`[DataAgent] Using persistent agent: ${dataAgentName}`);
@@ -375,14 +435,17 @@ app.post('/api/v1/chat', async (req, res) => {
 
     if (existingConversationId) {
       // --- STATEFUL MODE: Resume existing conversation ---
-      // Google stores the history, we just send the new message
-      console.log(`[Stateful] Resuming conversation: ${existingConversationId}`);
+      // Build the full conversation path, handling both raw IDs and full paths
+      const conversationPath = existingConversationId.startsWith('projects/')
+        ? existingConversationId
+        : `projects/${caProjectId}/locations/${location}/conversations/${existingConversationId}`;
+      console.log(`[Stateful] Resuming conversation: ${conversationPath}`);
       if (dataAgentName) {
         chatPayload = {
-          parent: `projects/${projectId_env}/locations/${location}`,
+          parent: `projects/${caProjectId}/locations/${location}`,
           messages: messages,
           conversationReference: {
-            conversation: `projects/${projectId_env}/locations/${location}/conversations/${existingConversationId}`,
+            conversation: conversationPath,
             dataAgentContext: {
               dataAgent: dataAgentName
             }
@@ -390,10 +453,10 @@ app.post('/api/v1/chat', async (req, res) => {
         };
       } else {
         chatPayload = {
-          parent: `projects/${projectId_env}/locations/${location}`,
+          parent: `projects/${caProjectId}/locations/${location}`,
           messages: messages,
           conversationReference: {
-            conversation: `projects/${projectId_env}/locations/${location}/conversations/${existingConversationId}`,
+            conversation: conversationPath,
             inlineContext: {
               datasourceReferences: bigqueryDataSource,
               systemInstruction: systemInstruction
@@ -406,7 +469,7 @@ app.post('/api/v1/chat', async (req, res) => {
       if (dataAgentName) {
         console.log('[Stateful] Starting new conversation with persistent Data Agent');
         chatPayload = {
-          parent: `projects/${projectId_env}/locations/${location}`,
+          parent: `projects/${caProjectId}/locations/${location}`,
           messages: messages,
           dataAgentContext: {
             dataAgent: dataAgentName
@@ -415,7 +478,7 @@ app.post('/api/v1/chat', async (req, res) => {
       } else {
         console.log('[Stateful] Starting new conversation with inline context (no agent available)');
         chatPayload = {
-          parent: `projects/${projectId_env}/locations/${location}`,
+          parent: `projects/${caProjectId}/locations/${location}`,
           messages: messages,
           inlineContext: {
             datasourceReferences: bigqueryDataSource,
@@ -425,10 +488,16 @@ app.post('/api/v1/chat', async (req, res) => {
       }
     }
 
-    // Make request to Conversational Analytics API using ADC service account token
+    // Make request to Conversational Analytics API using user's OAuth token
+    console.log('[CA_DEBUG] Step 4: Calling CA API at:', chatUrl);
+    console.log('[CA_DEBUG] Payload parent:', chatPayload.parent);
+    console.log('[CA_DEBUG] Has inlineContext:', !!chatPayload.inlineContext);
+    console.log('[CA_DEBUG] Has dataAgentContext:', !!chatPayload.dataAgentContext);
+    console.log('[CA_DEBUG] Has conversationReference:', !!chatPayload.conversationReference);
+    console.log('[CA_DEBUG] Table refs count:', tableReferences.length);
     const chatResponse = await axios.post(chatUrl, chatPayload, {
       headers: {
-        'Authorization': `Bearer ${adcToken}`,
+        'Authorization': `Bearer ${caToken}`,
         'Content-Type': 'application/json',
         'x-server-timeout': '300'
       },
@@ -442,8 +511,8 @@ app.post('/api/v1/chat', async (req, res) => {
     let returnedConversationId = existingConversationId || null; // Will be updated from response
     let accumulatedJson = chatResponse.data.toString('utf-8'); // Convert buffer to string properly
 
-    console.log('DEBUG_RAW_RESPONSE_LENGTH:', accumulatedJson.length);
-    console.log('DEBUG_FULL_RAW_RESPONSE:', accumulatedJson); // Log EVERYTHING to find hidden data
+    console.log('[CA_DEBUG] Step 5: CA API call SUCCEEDED! Response length:', accumulatedJson.length);
+    console.log('[CA_DEBUG] Raw response (first 2000 chars):', accumulatedJson.substring(0, 2000));
 
     // Parse the full accumulated JSON
     try {
@@ -470,16 +539,9 @@ app.post('/api/v1/chat', async (req, res) => {
             || msg.metadata?.conversation || msg.conversation
             || msg.systemMessage?.conversationName || msg.systemMessage?.metadata?.conversationName;
           if (convName && !returnedConversationId) {
-            // Format: projects/{project}/locations/{location}/conversations/{id}
-            const convParts = convName.split('/');
-            if (convParts.length >= 6) {
-              returnedConversationId = convParts[convParts.length - 1];
-              console.log(`[Stateful] Extracted conversation ID from conversationName: ${returnedConversationId}`);
-            } else {
-              // Maybe it's just the raw ID
-              returnedConversationId = convName;
-              console.log(`[Stateful] Extracted raw conversation ID: ${returnedConversationId}`);
-            }
+            // Store the FULL path to avoid project/location mismatches when resuming
+            returnedConversationId = convName;
+            console.log(`[Stateful] Extracted conversation path: ${returnedConversationId}`);
           }
           // Also check for conversationId directly
           if (msg.conversationId && !returnedConversationId) {
@@ -562,17 +624,16 @@ app.post('/api/v1/chat', async (req, res) => {
                   const columns = Object.keys(dataRows[0]);
 
                   // Smart column detection: find numeric vs categorical columns
-                  const numericCols = columns.filter(c => {
-                    const vals = dataRows.slice(0, 5).map(r => r[c]);
-                    return vals.every(v => v !== null && v !== undefined && !isNaN(parseFloat(v)));
-                  });
-                  const categoricalCols = columns.filter(c => !numericCols.includes(c));
+                  // Classify columns properly: dates, numbers, IDs, categories
+                  const isDateLike = (col) => dataRows.slice(0, 5).every(r => /^\d{4}-\d{2}-\d{2}/.test(String(r[col] || '')));
+                  const isIdLike = (col) => /^(id|.*_id|.*_code)$/i.test(col) || dataRows.slice(0, 5).every(r => /^[A-Z]{2,}-\d+$/.test(String(r[col] || '')));
+                  const isNumericLike = (col) => !isDateLike(col) && !isIdLike(col) && dataRows.slice(0, 5).every(r => r[col] !== null && r[col] !== undefined && !isNaN(Number(r[col])));
 
-                  // Pick best X (categorical) and Y (numeric) based on data semantics
-                  const xField = categoricalCols.length > 0 ? categoricalCols[0] : columns[0];
-                  const yField = numericCols.length > 0
-                    ? (numericCols.find(c => c !== xField) || numericCols[0])
-                    : (columns.find(c => c !== xField) || columns[columns.length > 1 ? 1 : 0]);
+                  const dateCols = columns.filter(isDateLike);
+                  const numericCols = columns.filter(isNumericLike);
+                  const categoricalCols = columns.filter(c => !dateCols.includes(c) && !numericCols.includes(c) && !isIdLike(c));
+
+                  console.log('DEBUG_COL_CLASSIFICATION:', JSON.stringify({ dateCols, numericCols, categoricalCols, idCols: columns.filter(isIdLike) }));
 
                   // Determine mark type from Google's chartType
                   let markType = 'bar';
@@ -581,30 +642,78 @@ app.post('/api/v1/chat', async (req, res) => {
                   else if (chartData.chartType.toLowerCase().includes('scatter')) markType = 'point';
                   else if (chartData.chartType.toLowerCase().includes('area')) markType = 'area';
 
-                  // Detect if X is temporal (date-like)
-                  const xType = categoricalCols.includes(xField) ? 'nominal' : 'quantitative';
-
-                  vegaSpec = {
-                    "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-                    "data": { "values": dataRows },
-                    "mark": markType,
-                    "encoding": {
-                      "x": { "field": xField, "type": xType, "title": xField },
-                      "y": { "field": yField, "type": "quantitative", "title": yField }
-                    },
-                    "width": 400,
-                    "height": 300
-                  };
-
-                  // For pie charts, adjust encoding
-                  if (markType === 'arc') {
-                    vegaSpec.encoding = {
-                      "theta": { "field": yField, "type": "quantitative" },
-                      "color": { "field": xField, "type": "nominal" }
+                  // Build chart based on available column types
+                  if (numericCols.length > 0 && categoricalCols.length > 0) {
+                    // Category vs Number
+                    vegaSpec = {
+                      "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+                      "data": { "values": dataRows },
+                      "mark": markType === 'arc' ? 'arc' : markType,
+                      "encoding": {
+                        "x": { "field": categoricalCols[0], "type": "nominal", "title": categoricalCols[0], "sort": "-y" },
+                        "y": { "field": numericCols[0], "type": "quantitative", "title": numericCols[0] }
+                      },
+                      "width": 400, "height": 300
                     };
+                  } else if (numericCols.length > 0 && dateCols.length > 0) {
+                    // Date vs Number → line chart
+                    vegaSpec = {
+                      "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+                      "data": { "values": dataRows },
+                      "mark": "line",
+                      "encoding": {
+                        "x": { "field": dateCols[0], "type": "temporal", "title": dateCols[0] },
+                        "y": { "field": numericCols[0], "type": "quantitative", "title": numericCols[0] }
+                      },
+                      "width": 400, "height": 300
+                    };
+                  } else if (dateCols.length > 0 && categoricalCols.length > 0) {
+                    // Timeline: dates vs categories → no good chart, skip
+                    console.log('[ChartBuilder] Date + category only, skipping chart');
+                  } else {
+                    console.log('[ChartBuilder] No suitable column combination for chart');
                   }
 
-                  console.log('DEBUG_BUILT_VEGA_SPEC:', JSON.stringify(vegaSpec, null, 2).substring(0, 300));
+                  // Improve granularity for narrow data ranges — check both x and y axes
+                  if (vegaSpec && markType !== 'arc' && numericCols.length > 0) {
+                    const axes = ['x', 'y'];
+                    for (const axis of axes) {
+                      const enc = vegaSpec.encoding?.[axis];
+                      if (enc?.type === 'quantitative' && enc?.field) {
+                        const numValues = dataRows.map(r => Number(r[enc.field])).filter(v => !isNaN(v));
+                        if (numValues.length > 1) {
+                          const minVal = Math.min(...numValues);
+                          const maxVal = Math.max(...numValues);
+                          const range = maxVal - minVal;
+                          // If data range is narrow relative to max (<30%), use non-zero baseline with padding
+                          if (maxVal > 0 && range > 0 && range / maxVal < 0.30) {
+                            const padding = range * 0.15 || maxVal * 0.02;
+                            enc.scale = { zero: false, domain: [Math.max(0, minVal - padding), maxVal + padding] };
+                            console.log(`[ChartBuilder] Narrow range on ${axis}-axis (${minVal}-${maxVal}), using non-zero baseline`);
+                          }
+                          // Add number formatting for large values
+                          if (maxVal >= 1000) {
+                            enc.axis = { ...(enc.axis || {}), format: ',.0f' };
+                          }
+                        }
+                      }
+                    }
+                  }
+
+                  // For pie charts, adjust encoding
+                  if (vegaSpec && markType === 'arc' && numericCols.length > 0) {
+                    const colorField = categoricalCols[0] || columns.find(c => c !== numericCols[0]) || columns[0];
+                    vegaSpec.encoding = {
+                      "theta": { "field": numericCols[0], "type": "quantitative" },
+                      "color": { "field": colorField, "type": "nominal" }
+                    };
+                    delete vegaSpec.width;
+                    delete vegaSpec.height;
+                  }
+
+                  if (vegaSpec) {
+                    console.log('DEBUG_BUILT_VEGA_SPEC:', JSON.stringify(vegaSpec, null, 2).substring(0, 300));
+                  }
                 }
               }
 
@@ -777,6 +886,20 @@ app.post('/api/v1/chat', async (req, res) => {
       try {
         const columns = Object.keys(rawDataRows[0]);
         const sampleRows = rawDataRows.slice(0, 5);
+
+        // Classify each column by type to help Gemini and fallback
+        const columnTypes = {};
+        columns.forEach(col => {
+          const sampleVals = rawDataRows.slice(0, 10).map(r => r[col]).filter(v => v != null && v !== '');
+          const isDate = sampleVals.every(v => /^\d{4}-\d{2}-\d{2}/.test(String(v)));
+          const isNumeric = sampleVals.every(v => !isNaN(Number(v)) && !/^\d{4}-\d{2}/.test(String(v)));
+          const isId = /^(id|.*_id|.*_code|emp.*)$/i.test(col) || sampleVals.every(v => /^[A-Z]{2,}-\d+$/.test(String(v)));
+          if (isDate) columnTypes[col] = 'temporal';
+          else if (isNumeric && !isId) columnTypes[col] = 'quantitative';
+          else columnTypes[col] = 'nominal';
+        });
+
+        console.log('[SmartChart] Column types detected:', JSON.stringify(columnTypes));
         console.log('[SmartChart] Asking Gemini to generate chart spec...');
 
         const chartGenLocation = (process.env.GCP_LOCATION && process.env.GCP_LOCATION.includes('-')) ? process.env.GCP_LOCATION : 'europe-west1';
@@ -786,20 +909,29 @@ app.post('/api/v1/chat', async (req, res) => {
           generationConfig: { temperature: 0.1, maxOutputTokens: 1024 }
         });
 
-        const chartPrompt = `You are a data visualization expert. Given a user's question and query results, generate the best Vega-Lite v5 chart specification.
+        const chartPrompt = `You are a data visualization expert. Given a user's question and query results, generate the BEST Vega-Lite v5 chart specification.
 
 User question: "${message}"
-Columns available: ${JSON.stringify(columns)}
+Columns and their detected types: ${JSON.stringify(columnTypes)}
 Sample data (first 5 rows): ${JSON.stringify(sampleRows)}
 Total rows: ${rawDataRows.length}
 
-Rules:
-1. Pick the most relevant columns for the visualization based on the user's question.
-2. Choose the best chart type (bar, line, point, arc, area) for this data.
-3. Use "nominal" for categorical text fields, "quantitative" for numbers, "temporal" for dates.
-4. Do NOT include the data values — I will inject them. Set "data": {"values": []} as placeholder.
-5. Set width to 500 and height to 300.
-6. Return ONLY a valid JSON object (no markdown, no explanation, no code fences).`;
+CRITICAL RULES:
+1. THINK about what visualization makes sense for this data and question. Not everything needs a bar chart!
+   - Dates/time series → use "line" chart with temporal X axis
+   - Comparisons of amounts → use "bar" chart
+   - Distribution/scatter → use "point" chart
+   - Proportions → use "arc" (pie/donut) chart
+   - Ranking/top-N lists with no clear numeric metric → RETURN null (no chart needed)
+2. NEVER plot date columns as quantitative (numbers). Dates MUST use "temporal" type.
+3. NEVER plot ID columns (emp_id, user_id, order_id, etc.) as a meaningful axis. They are identifiers, not data.
+4. If the data is a simple list/table (e.g., top employees with names and dates), a chart may NOT add value. Return the JSON string "null" if no chart is appropriate.
+5. Use "nominal" for categories, "quantitative" for numbers, "temporal" for dates.
+6. Do NOT include data values — set "data": {"values": []} as placeholder.
+7. Set width to 500 and height to 300.
+8. Add meaningful axis titles and a chart title.
+9. IMPORTANT: If numeric values are in a narrow range (e.g., all salaries between 170000-180000), set "scale": {"zero": false} on the quantitative axis so differences are visible. Add number formatting with "axis": {"format": ",.0f"} for large numbers.
+10. Return ONLY a valid JSON object OR the string null. No markdown, no explanation, no code fences.`;
 
         const chartResult = await chartModel.generateContent(chartPrompt);
         let chartSpecText = chartResult.response.candidates[0].content.parts[0].text.trim();
@@ -809,45 +941,96 @@ Rules:
           chartSpecText = chartSpecText.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
         }
 
-        const firstBrace = chartSpecText.indexOf('{');
-        const lastBrace = chartSpecText.lastIndexOf('}');
-        if (firstBrace !== -1 && lastBrace !== -1) {
-          chartSpecText = chartSpecText.substring(firstBrace, lastBrace + 1);
+        // Check if Gemini decided no chart is appropriate
+        if (chartSpecText === 'null' || chartSpecText === '"null"' || chartSpecText.toLowerCase() === 'none') {
+          console.log('[SmartChart] Gemini decided no chart is appropriate for this data');
+          // No chart — that's fine
+        } else {
+          const firstBrace = chartSpecText.indexOf('{');
+          const lastBrace = chartSpecText.lastIndexOf('}');
+          if (firstBrace !== -1 && lastBrace !== -1) {
+            chartSpecText = chartSpecText.substring(firstBrace, lastBrace + 1);
+          }
+
+          const smartSpec = JSON.parse(chartSpecText);
+
+          // Validate: reject specs that use dates as quantitative
+          const encodings = smartSpec.encoding || {};
+          let hasInvalidEncoding = false;
+          Object.values(encodings).forEach((enc) => {
+            if (enc.field && columnTypes[enc.field] === 'temporal' && enc.type === 'quantitative') {
+              console.warn(`[SmartChart] Rejecting: Gemini used temporal column "${enc.field}" as quantitative`);
+              hasInvalidEncoding = true;
+            }
+          });
+
+          if (!hasInvalidEncoding) {
+            // Inject actual data
+            smartSpec.data = { values: rawDataRows };
+            if (!smartSpec.$schema) {
+              smartSpec.$schema = "https://vega.github.io/schema/vega-lite/v5.json";
+            }
+            // Apply narrow-range fix to Gemini-generated charts too (both axes)
+            for (const axisKey of ['x', 'y']) {
+              const axEnc = smartSpec.encoding?.[axisKey];
+              if (axEnc && axEnc.type === 'quantitative' && axEnc.field && smartSpec.mark !== 'arc') {
+                const vals = rawDataRows.map(r => Number(r[axEnc.field])).filter(v => !isNaN(v));
+                if (vals.length > 1) {
+                  const mn = Math.min(...vals), mx = Math.max(...vals), rng = mx - mn;
+                  if (mx > 0 && rng > 0 && rng / mx < 0.30) {
+                    const pad = rng * 0.15 || mx * 0.02;
+                    axEnc.scale = { zero: false, domain: [Math.max(0, mn - pad), mx + pad] };
+                  }
+                  if (mx >= 1000 && !axEnc.axis) axEnc.axis = { format: ',.0f' };
+                }
+              }
+            }
+            finalChart = smartSpec;
+            console.log('[SmartChart] Gemini-generated chart spec applied:', smartSpec.mark);
+          }
         }
-
-        const smartSpec = JSON.parse(chartSpecText);
-
-        // Inject actual data (Gemini only provided the spec structure)
-        smartSpec.data = { values: rawDataRows };
-        if (!smartSpec.$schema) {
-          smartSpec.$schema = "https://vega.github.io/schema/vega-lite/v5.json";
-        }
-
-        finalChart = smartSpec;
-        console.log('[SmartChart] Gemini-generated chart spec applied');
       } catch (chartErr) {
-        console.warn('[SmartChart] Gemini chart generation failed, using simple fallback:', chartErr.message);
-        // Simple fallback: first text column = X, first numeric column = Y
+        console.warn('[SmartChart] Gemini chart generation failed:', chartErr.message);
+        // Smart fallback: only generate a chart if we have a true numeric column
         try {
           const columns = Object.keys(rawDataRows[0]);
-          const numericCol = columns.find(c => {
-            const val = rawDataRows[0][c];
-            return !isNaN(parseFloat(val)) && columns.indexOf(c) > 0;
-          }) || columns.find(c => !isNaN(parseFloat(rawDataRows[0][c])));
-          const labelCol = columns.find(c => c !== numericCol) || columns[0];
 
-          if (numericCol && labelCol) {
+          // Detect column types properly
+          const isDateCol = (col) => rawDataRows.slice(0, 5).every(r => /^\d{4}-\d{2}-\d{2}/.test(String(r[col] || '')));
+          const isIdCol = (col) => /^(id|.*_id|.*_code)$/i.test(col) || rawDataRows.slice(0, 5).every(r => /^[A-Z]{2,}-\d+$/.test(String(r[col] || '')));
+          const isNumericCol = (col) => !isDateCol(col) && !isIdCol(col) && rawDataRows.slice(0, 5).every(r => !isNaN(Number(r[col])));
+
+          const numericCols = columns.filter(isNumericCol);
+          const dateCols = columns.filter(isDateCol);
+          const categoryCols = columns.filter(c => !isDateCol(c) && !isNumericCol(c) && !isIdCol(c));
+
+          if (numericCols.length > 0 && categoryCols.length > 0) {
+            // Bar chart: category vs number
             finalChart = {
               "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-              "data": { "values": rawDataRows.map(r => ({ [labelCol]: r[labelCol], [numericCol]: parseFloat(r[numericCol]) || 0 })) },
+              "data": { "values": rawDataRows },
               "mark": "bar",
               "encoding": {
-                "x": { "field": labelCol, "type": "nominal", "title": labelCol, "sort": "-y" },
-                "y": { "field": numericCol, "type": "quantitative", "title": numericCol }
+                "x": { "field": categoryCols[0], "type": "nominal", "title": categoryCols[0], "sort": "-y" },
+                "y": { "field": numericCols[0], "type": "quantitative", "title": numericCols[0] }
               },
-              "width": 500,
-              "height": 300
+              "width": 500, "height": 300
             };
+          } else if (numericCols.length > 0 && dateCols.length > 0) {
+            // Line chart: date vs number
+            finalChart = {
+              "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+              "data": { "values": rawDataRows },
+              "mark": "line",
+              "encoding": {
+                "x": { "field": dateCols[0], "type": "temporal", "title": dateCols[0] },
+                "y": { "field": numericCols[0], "type": "quantitative", "title": numericCols[0] }
+              },
+              "width": 500, "height": 300
+            };
+          } else {
+            console.log('[SmartChart] No suitable columns for chart — skipping');
+            // No chart: data is just a list (IDs, names, dates) — no meaningful numeric axis
           }
         } catch (fallbackErr) {
           console.warn('[SmartChart] Fallback also failed:', fallbackErr.message);
@@ -856,7 +1039,7 @@ Rules:
     }
 
     // Send structured response
-    console.log('Sending response to frontend:', { replyLength: fullResponseText.length, hasChart: !!finalChart, hasSql: !!finalSql, hasData: rawDataRows.length > 0, conversationId: returnedConversationId });
+    console.log('[CA_DEBUG] Step 6: FINAL RESPONSE from CA API:', { replyLength: fullResponseText.length, hasChart: !!finalChart, hasSql: !!finalSql, dataRowCount: rawDataRows.length, conversationId: returnedConversationId });
 
     // If no text was extracted, provide helpful feedback
     if (!fullResponseText || fullResponseText.trim().length === 0) {
@@ -924,13 +1107,66 @@ Rules:
     });
 
   } catch (err) {
-    console.error("Conversational Analytics API Error:", err.message);
+    console.error("[CA_DEBUG] CA API FAILED! Error:", err.message);
+    if (err.response) {
+      console.error("[CA_DEBUG] CA API Error Status:", err.response.status);
+      console.error("[CA_DEBUG] CA API Error Data:", JSON.stringify(err.response.data?.toString?.() || err.response.data, null, 2));
+    }
+
+    // --- PERMISSION ERROR: Suggest alternative tables ---
+    const isPermissionError = err.response?.status === 403
+      || err.message?.includes('PERMISSION_DENIED')
+      || err.message?.includes('Access Denied')
+      || err.message?.includes('does not have permission');
+
+    if (isPermissionError) {
+      console.log('[CA_DEBUG] Permission error detected, searching for related accessible tables...');
+      let suggestions = [];
+      try {
+        // Extract keywords from the user's message to find related tables
+        const keywords = message.replace(/[^a-zA-Z0-9_ ]/g, '').split(/\s+/).filter(w => w.length > 3).slice(0, 5);
+        const searchQuery = keywords.length > 0 ? keywords.join(' ') : (context.name || '');
+        if (searchQuery) {
+          const suggestClient = new CatalogServiceClient();
+          const [suggestResponse] = await suggestClient.searchEntries({
+            name: `projects/${PROJECT_ID}/locations/global`,
+            query: searchQuery,
+            pageSize: 5,
+          });
+          const suggestResults = suggestResponse.results || suggestResponse || [];
+          suggestions = suggestResults
+            .filter(r => {
+              const entry = r.dataplexEntry || r;
+              const entryType = entry.entryType || '';
+              return entryType.toLowerCase().includes('table') || entryType.toLowerCase().includes('view');
+            })
+            .slice(0, 5)
+            .map(r => {
+              const entry = r.dataplexEntry || r;
+              return {
+                name: entry.fullyQualifiedName || entry.name || '',
+                displayName: entry.entrySource?.displayName || entry.name?.split('/').pop() || '',
+                description: (entry.entrySource?.description || '').substring(0, 150),
+              };
+            });
+        }
+      } catch (suggestErr) {
+        console.warn('[CA_DEBUG] Could not fetch suggestions:', suggestErr.message);
+      }
+
+      return res.status(200).json({
+        reply: `You don't have permission to query the table "${context.name || 'requested'}". Please request access or try one of the suggested tables below.`,
+        error: true,
+        permissionDenied: true,
+        suggestions,
+      });
+    }
 
     // --- FALLBACK MECHANISM ---
     // If the specialized API fails (Auth, 404, etc.), fallback to standard Gemini 1.5 Flash
     // This ensures the user always gets an answer.
     try {
-      console.log('Attempting fallback to Gemini 1.5 Flash...');
+      console.log('[CA_DEBUG] FALLBACK: Attempting Gemini fallback because CA API failed...');
       // Vertex AI requires a specific region (not multi-region like 'us'), default to europe-west1
       const fallbackLocation = (process.env.GCP_LOCATION && process.env.GCP_LOCATION.includes('-')) ? process.env.GCP_LOCATION : 'europe-west1';
       const fallbackVertex = new VertexAI({
@@ -1001,7 +1237,16 @@ const PORT = process.env.PORT || 8080;
 
 
 // Serve static files from the React build folder
-app.use(express.static(path.join(__dirname, 'dist')));
+// Cache JS/CSS assets (hashed filenames) aggressively, but never cache index.html
+app.use(express.static(path.join(__dirname, 'dist'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  }
+}));
 
 // --- File Path for Local Data ---
 const dataFilePath = path.join(__dirname, 'configData.json');
@@ -1027,6 +1272,9 @@ app.post('/api/v1/ai-search', async (req, res) => {
       return res.status(400).json({ error: 'Query is required and must be at least 2 characters.' });
     }
 
+    // Truncate query for AI prompts to avoid token limit issues
+    const safeQuery = query.length > 500 ? query.substring(0, 500) + '...' : query;
+
     // Step 1: Use Gemini to understand the query and generate search terms
     const vertex_ai = new VertexAI({
       project: projectId,
@@ -1036,7 +1284,7 @@ app.post('/api/v1/ai-search', async (req, res) => {
 
     const aiPrompt = `You are a data catalog search assistant. Given a user's natural language query, extract the key search terms and concepts that would help find relevant database tables or datasets.
 
-User Query: "${query}"
+User Query: "${safeQuery}"
 
 Analyze the query and return a JSON object with:
 1. "searchTerms": array of individual keywords to search for (lowercase, no special characters)
@@ -1047,17 +1295,26 @@ Analyze the query and return a JSON object with:
 Return ONLY valid JSON, no markdown or explanations.
 Example output: {"searchTerms":["customer","orders","purchase"],"dataplexQuery":"customer orders purchase","intent":"customer order data","suggestedFilters":{}}`;
 
-    const aiResult = await generativeModel.generateContent(aiPrompt);
-    const aiResponseText = aiResult.response.candidates[0].content.parts[0].text.trim();
-
     let searchConfig;
     try {
-      // Clean markdown if present
-      let cleanJson = aiResponseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-      searchConfig = JSON.parse(cleanJson);
-    } catch (parseError) {
-      console.error('AI response parse error:', parseError, 'Response:', aiResponseText);
-      // Fallback to simple search
+      const aiResult = await generativeModel.generateContent(aiPrompt);
+      const aiResponseText = aiResult.response.candidates[0].content.parts[0].text.trim();
+
+      try {
+        // Clean markdown if present
+        let cleanJson = aiResponseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+        searchConfig = JSON.parse(cleanJson);
+      } catch (parseError) {
+        console.error('AI response parse error:', parseError, 'Response:', aiResponseText);
+        searchConfig = null;
+      }
+    } catch (aiError) {
+      console.warn('AI query understanding failed (falling back to simple search):', aiError.message);
+      searchConfig = null;
+    }
+
+    // Fallback to simple search if AI failed
+    if (!searchConfig) {
       searchConfig = {
         searchTerms: query.toLowerCase().split(/\s+/).filter(t => t.length > 2),
         dataplexQuery: query,
@@ -1068,9 +1325,10 @@ Example output: {"searchTerms":["customer","orders","purchase"],"dataplexQuery":
 
     console.log('AI Search Config:', searchConfig);
 
-    // Step 2: Search Dataplex with the AI-generated query
+    // Step 2: Search Dataplex with the AI-generated query across ALL projects
     const auth = new AdcGoogleAuth();
     const dataplexClient = new CatalogServiceClient({ auth });
+    const allProjects = getAllProjects();
 
     // Build search query based on type
     let searchQuery = searchConfig.dataplexQuery || query;
@@ -1080,16 +1338,38 @@ Example output: {"searchTerms":["customer","orders","purchase"],"dataplexQuery":
       searchQuery += ' AND NOT type="data_product"';
     }
 
-    const searchRequest = {
-      name: `projects/${projectId}/locations/global`,
-      query: searchQuery,
-      pageSize: 20
-    };
+    console.log(`[AI-SEARCH] Searching across ${allProjects.length} projects: ${allProjects.join(', ')}`);
 
-    console.log('Dataplex Search Request:', searchRequest);
+    // Search across all projects and merge results
+    const searchPromises = allProjects.map(async (projId) => {
+      try {
+        const searchRequest = {
+          name: `projects/${projId}/locations/global`,
+          query: searchQuery,
+          pageSize: 20
+        };
+        const [searchResponse] = await dataplexClient.searchEntries(searchRequest);
+        console.log(`[AI-SEARCH] Project ${projId}: found ${searchResponse.results?.length || 0} results`);
+        return searchResponse.results || [];
+      } catch (err) {
+        console.warn(`[AI-SEARCH] Failed to search project ${projId}:`, err.message);
+        return [];
+      }
+    });
 
-    const [searchResponse] = await dataplexClient.searchEntries(searchRequest);
-    let results = searchResponse.results || [];
+    const allResults = await Promise.all(searchPromises);
+    let results = allResults.flat();
+
+    // Remove duplicates based on entry name
+    const seenNames = new Set();
+    results = results.filter(entry => {
+      const name = entry?.dataplexEntry?.name || entry?.name;
+      if (!name || seenNames.has(name)) return false;
+      seenNames.add(name);
+      return true;
+    });
+
+    console.log(`[AI-SEARCH] Total unique results: ${results.length}`);
 
     // Step 3: If we have results, use Gemini to rank them by relevance
     if (results.length > 0) {
@@ -1100,8 +1380,9 @@ Rank these data entries by relevance (most relevant first). Return a JSON array 
 Entries:
 ${results.slice(0, 15).map((r, i) => {
         const entry = r.dataplexEntry || r;
+        const desc = entry.entrySource?.description || 'No description';
         return `${i}. Name: ${entry.entrySource?.displayName || entry.name?.split('/').pop() || 'Unknown'}
-     Description: ${entry.entrySource?.description || 'No description'}
+     Description: ${desc.length > 200 ? desc.substring(0, 200) + '...' : desc}
      Type: ${entry.entryType || 'Unknown'}`;
       }).join('\n')}
 
@@ -1727,6 +2008,251 @@ app.get('/api/v1/aspect-types', async (req, res) => {
     res.status(500).json({ message: 'An error occurred while listing aspect types from Dataplex.', details: error.message });
   }
 });
+
+/**
+ * POST /api/v1/get-insights
+ * Get insights for a table using Dataplex aspects + BigQuery metadata
+ * No Vertex AI - uses native GCP APIs only
+ */
+app.post('/api/v1/get-insights', async (req, res) => {
+  try {
+    const { entryName, fullyQualifiedName } = req.body;
+    console.log('[INSIGHTS] Request for:', entryName || fullyQualifiedName);
+
+    const insights = {
+      tableMetadata: null,
+      description: null,
+      suggestedQueries: [],
+      dataProfile: null,
+      dataQuality: null,
+      aspects: {},
+      source: []
+    };
+
+    // 1. Get BigQuery table metadata if we have FQN
+    if (fullyQualifiedName) {
+      let projectId, datasetId, tableId;
+      let fqn = fullyQualifiedName;
+
+      // Parse FQN (bigquery:project.dataset.table or project.dataset.table)
+      if (fqn.startsWith('bigquery:')) {
+        fqn = fqn.substring(9);
+      } else if (fqn.startsWith('bigquery://')) {
+        fqn = fqn.replace('bigquery://', '');
+      }
+
+      const parts = fqn.split('.');
+      if (parts.length >= 3) {
+        projectId = parts[0];
+        datasetId = parts[1];
+        tableId = parts[2];
+
+        console.log(`[INSIGHTS] Fetching BigQuery metadata for ${projectId}.${datasetId}.${tableId}`);
+
+        try {
+          const bigquery = new BigQuery({ projectId });
+          const [metadata] = await bigquery.dataset(datasetId).table(tableId).getMetadata();
+
+          // Get table description
+          insights.description = metadata.description || null;
+
+          insights.tableMetadata = {
+            numRows: metadata.numRows ? parseInt(metadata.numRows) : null,
+            numBytes: metadata.numBytes ? parseInt(metadata.numBytes) : null,
+            numBytesFormatted: metadata.numBytes ? formatBytes(parseInt(metadata.numBytes)) : 'Unknown',
+            creationTime: metadata.creationTime ? new Date(parseInt(metadata.creationTime)).toISOString() : null,
+            lastModifiedTime: metadata.lastModifiedTime ? new Date(parseInt(metadata.lastModifiedTime)).toISOString() : null,
+            location: metadata.location,
+            tableType: metadata.type,
+            numColumns: metadata.schema?.fields?.length || 0,
+            partitioning: metadata.timePartitioning ? {
+              type: metadata.timePartitioning.type,
+              field: metadata.timePartitioning.field
+            } : null,
+            clustering: metadata.clustering?.fields || null
+          };
+
+          // Generate suggested queries based on schema
+          const schema = metadata.schema?.fields || [];
+          const fullTableName = `\`${projectId}.${datasetId}.${tableId}\``;
+
+          // Basic SELECT query
+          insights.suggestedQueries.push({
+            title: 'Preview data',
+            description: 'View first 100 rows',
+            query: `SELECT *\nFROM ${fullTableName}\nLIMIT 100`
+          });
+
+          // Count query
+          insights.suggestedQueries.push({
+            title: 'Count rows',
+            description: 'Get total row count',
+            query: `SELECT COUNT(*) as total_rows\nFROM ${fullTableName}`
+          });
+
+          // If there's a timestamp/date column, suggest time-based query
+          const dateColumns = schema.filter(f =>
+            ['TIMESTAMP', 'DATE', 'DATETIME'].includes(f.type?.toUpperCase()) ||
+            f.name?.toLowerCase().includes('date') ||
+            f.name?.toLowerCase().includes('time') ||
+            f.name?.toLowerCase().includes('created') ||
+            f.name?.toLowerCase().includes('updated')
+          );
+          if (dateColumns.length > 0) {
+            const dateCol = dateColumns[0].name;
+            insights.suggestedQueries.push({
+              title: 'Recent records',
+              description: `Get records from last 7 days by ${dateCol}`,
+              query: `SELECT *\nFROM ${fullTableName}\nWHERE ${dateCol} >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)\nORDER BY ${dateCol} DESC\nLIMIT 100`
+            });
+          }
+
+          // If there are numeric columns, suggest aggregation
+          const numericColumns = schema.filter(f =>
+            ['INT64', 'FLOAT64', 'NUMERIC', 'BIGNUMERIC', 'INTEGER', 'FLOAT'].includes(f.type?.toUpperCase())
+          );
+          if (numericColumns.length > 0) {
+            const numCol = numericColumns[0].name;
+            insights.suggestedQueries.push({
+              title: 'Basic statistics',
+              description: `Get min, max, avg for ${numCol}`,
+              query: `SELECT\n  MIN(${numCol}) as min_value,\n  MAX(${numCol}) as max_value,\n  AVG(${numCol}) as avg_value,\n  COUNT(*) as total_count\nFROM ${fullTableName}`
+            });
+          }
+
+          // If there are string columns that look like categories, suggest GROUP BY
+          const categoryColumns = schema.filter(f =>
+            f.type?.toUpperCase() === 'STRING' && (
+              f.name?.toLowerCase().includes('type') ||
+              f.name?.toLowerCase().includes('status') ||
+              f.name?.toLowerCase().includes('category') ||
+              f.name?.toLowerCase().includes('country') ||
+              f.name?.toLowerCase().includes('region') ||
+              f.name?.toLowerCase().includes('state') ||
+              f.name?.toLowerCase().includes('gender')
+            )
+          );
+          if (categoryColumns.length > 0) {
+            const catCol = categoryColumns[0].name;
+            insights.suggestedQueries.push({
+              title: 'Distribution',
+              description: `Count by ${catCol}`,
+              query: `SELECT ${catCol}, COUNT(*) as count\nFROM ${fullTableName}\nGROUP BY ${catCol}\nORDER BY count DESC\nLIMIT 20`
+            });
+          }
+
+          insights.source.push('BigQuery');
+          console.log('[INSIGHTS] BigQuery metadata retrieved successfully');
+        } catch (bqError) {
+          console.warn('[INSIGHTS] BigQuery metadata fetch failed:', bqError.message);
+        }
+      }
+    }
+
+    // 2. Get Dataplex entry aspects (may contain profile/quality data)
+    if (entryName) {
+      try {
+        const catalogClient = new CatalogServiceClient();
+        const [entry] = await catalogClient.getEntry({
+          name: entryName,
+          view: 'FULL'
+        });
+
+        if (entry.aspects) {
+          // Look for data profile aspects
+          for (const [key, value] of Object.entries(entry.aspects)) {
+            const keyLower = key.toLowerCase();
+            if (keyLower.includes('profile') || keyLower.includes('quality') ||
+                keyLower.includes('statistics') || keyLower.includes('schema')) {
+              insights.aspects[key] = value.data || value;
+            }
+          }
+
+          // Extract specific well-known aspects
+          const schemaAspect = entry.aspects['bigquery.googleapis.com/Table.global.schema'];
+          if (schemaAspect?.data?.fields) {
+            insights.schema = schemaAspect.data.fields;
+          }
+
+          const overviewAspect = entry.aspects['bigquery.googleapis.com/Table.global.overview'];
+          if (overviewAspect?.data) {
+            insights.overview = overviewAspect.data;
+          }
+
+          if (Object.keys(insights.aspects).length > 0) {
+            insights.source.push('Dataplex Aspects');
+          }
+        }
+        console.log('[INSIGHTS] Dataplex aspects retrieved');
+      } catch (dpError) {
+        console.warn('[INSIGHTS] Dataplex entry fetch failed:', dpError.message);
+      }
+    }
+
+    // 3. Try to find DataScans for this table (profile/quality scans)
+    if (fullyQualifiedName) {
+      try {
+        const dataScanClient = new DataScanServiceClient();
+        const location = process.env.GCP_LOCATION || 'europe-west1';
+
+        // List DataScans in the project
+        const [scans] = await dataScanClient.listDataScans({
+          parent: `projects/${PROJECT_ID}/locations/${location}`
+        });
+
+        // Find scans that match this table
+        for (const scan of scans || []) {
+          const scanResource = scan.data?.resource;
+          if (scanResource && fullyQualifiedName.includes(scanResource.split('/').pop())) {
+            // Get full scan with results
+            const [fullScan] = await dataScanClient.getDataScan({
+              name: scan.name,
+              view: 'FULL'
+            });
+
+            if (fullScan.dataProfileResult) {
+              insights.dataProfile = {
+                rowCount: fullScan.dataProfileResult.rowCount,
+                scannedData: fullScan.dataProfileResult.scannedData,
+                profile: fullScan.dataProfileResult.profile
+              };
+              insights.source.push('Dataplex Data Profile');
+            }
+
+            if (fullScan.dataQualityResult) {
+              insights.dataQuality = {
+                passed: fullScan.dataQualityResult.passed,
+                score: fullScan.dataQualityResult.score,
+                dimensions: fullScan.dataQualityResult.dimensions,
+                rules: fullScan.dataQualityResult.rules?.slice(0, 10) // Limit to 10 rules
+              };
+              insights.source.push('Dataplex Data Quality');
+            }
+            break; // Found matching scan
+          }
+        }
+      } catch (scanError) {
+        console.warn('[INSIGHTS] DataScan fetch failed:', scanError.message);
+      }
+    }
+
+    console.log(`[INSIGHTS] Returning insights from sources: ${insights.source.join(', ') || 'none'}`);
+    res.json(insights);
+
+  } catch (error) {
+    console.error('[INSIGHTS] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Helper function to format bytes
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
 
 /**
  * GET /api/entry-list
@@ -2492,31 +3018,79 @@ app.get('/api/v1/app-configs', async (req, res) => {
       let p = projectList[0] ? projectList[0].filter(pr => pr.projectId !== projectId) : [];
       projects = [currentProject[0], ...p];
       configData = defaultConfigData ? JSON.parse(defaultConfigData) : {};
+
+      // Add external projects from EXTERNAL_PROJECTS env var (they might not be in searchProjects)
+      const existingProjectIds = new Set(projects.map(pr => pr?.projectId).filter(Boolean));
+      EXTERNAL_PROJECTS.forEach(extProjId => {
+        if (!existingProjectIds.has(extProjId)) {
+          projects.push({
+            projectId: extProjId,
+            name: `projects/${extProjId}`,
+            displayName: extProjId
+          });
+          console.log(`[APP-CONFIGS] Added external project: ${extProjId}`);
+        }
+      });
     } catch (err) {
       console.error('[APP-CONFIGS] Error fetching configs:', err);
+      // Even if fetching fails, ensure we have the main project and external projects
+      if (projectId) {
+        projects.push({
+          projectId: projectId,
+          name: `projects/${projectId}`,
+          displayName: projectId
+        });
+      }
+      EXTERNAL_PROJECTS.forEach(extProjId => {
+        projects.push({
+          projectId: extProjId,
+          name: `projects/${extProjId}`,
+          displayName: extProjId
+        });
+      });
     }
 
     const reduceAspect = ({ name, fullyQualifiedName, entrySource, entryType }) => ({ name, fullyQualifiedName, entrySource, entryType });
 
     // Fetch user role if email is provided
     let userAdminRole = null;
+    let isDataOwner = false;
+    let ownedDatasets = [];
     const userEmail = req.query.email || req.headers['x-user-email'];
     if (userEmail) {
       try {
         // Use centralized resolution logic (Firestore -> Env -> IAM -> Steward)
         userAdminRole = await adminService.resolveAdminRole(userEmail);
+
+        // If not a regular admin, check if they're a data owner
+        if (!userAdminRole) {
+          const allProjects = (process.env.EXTERNAL_PROJECTS || '').split(/[\s,]+/).filter(Boolean);
+          allProjects.unshift(process.env.GOOGLE_CLOUD_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT);
+          ownedDatasets = await adminService.getOwnedDatasets(userEmail, allProjects);
+          isDataOwner = ownedDatasets.length > 0;
+        }
       } catch (err) {
         console.error('Error fetching user role for app config:', err);
       }
     }
 
+    // Filter out null/undefined projects and map to expected format
+    const validProjects = projects
+      .filter(p => p && p.projectId)
+      .map(({ projectId, name, displayName }) => ({ projectId, name, displayName }));
+
+    console.log(`[APP-CONFIGS] Returning ${validProjects.length} projects: ${validProjects.map(p => p.projectId).join(', ')}`);
+
     const configs = {
       aspects: aspects.map(({ dataplexEntry }) => ({ dataplexEntry: reduceAspect(dataplexEntry) })),
-      projects: projects.map(({ projectId, name, displayName }) => ({ projectId, name, displayName })),
+      projects: validProjects,
       defaultSearchProduct: configData.products || 'All',
       defaultSearchAssets: configData.assets || '',
       browseByAspectTypes: configData.aspectType || [],
-      userRole: userAdminRole
+      userRole: userAdminRole,
+      isDataOwner: isDataOwner,
+      ownedDatasets: ownedDatasets,
+      hasAdminCapabilities: userAdminRole !== null || isDataOwner
     };
 
     res.json(configs);
@@ -2870,6 +3444,29 @@ app.post('/api/v1/get-jobs-scan', async (req, res) => {
 
 
 /**
+ * GET /api/v1/get-data-scan-jobs
+ * Lists jobs for a specific data scan (used by TableInsights).
+ * Accepts ?parent=projects/{p}/locations/{l}/dataScans/{id}
+ */
+app.get('/api/v1/get-data-scan-jobs', async (req, res) => {
+  const { parent } = req.query;
+
+  if (!parent) {
+    return res.status(400).json({ message: 'Bad Request: A "parent" query parameter is required.' });
+  }
+
+  try {
+    const auth = new AdcGoogleAuth();
+    const dataplexDataScanClientv1 = new DataScanServiceClient({ auth });
+    const [jobs] = await dataplexDataScanClientv1.listDataScanJobs({ parent });
+    res.json(jobs);
+  } catch (error) {
+    console.error(`[GET-DATA-SCAN-JOBS] Error listing jobs for ${parent}:`, error);
+    res.status(500).json({ message: 'Error listing data scan jobs.', details: error.message });
+  }
+});
+
+/**
  * POST /api/batch-data-quality-scan-jobs
  * A protected endpoint to fetch jobs for a list of data quality scan IDs.
  */
@@ -2966,22 +3563,24 @@ const checkUserAdminRole = async (userEmail) => {
  */
 app.post('/api/v1/search', async (req, res) => {
   try {
-    const { query, pageSize, pageToken } = req.body;
+    const { query, pageSize, pageToken, semanticSearch } = req.body;
     const userEmail = req.headers['x-user-email'];
 
     console.log('======== [SEARCH START] ========');
-    console.log(`[SEARCH] Query: ${query}, User: ${userEmail}`);
+    console.log(`[SEARCH] Query: ${query}, User: ${userEmail}, SemanticSearch: ${semanticSearch}`);
 
     // Check Admin Status (Real IAM Check)
     const isAdmin = await checkUserAdminRole(userEmail);
     console.log(`[SEARCH] Is Admin (User/IAM)? ${isAdmin}`);
 
-    // Fetch ALL results (Service Account Scope)
+    // Use service account (default credentials) for catalog search so ALL authenticated
+    // users can discover metadata entries regardless of their BigQuery IAM access.
+    // Actual data access is enforced separately via check-entry-access.
     const client = new CatalogServiceClient();
-    const projectId = PROJECT_ID;
+    const allProjects = getAllProjects();
     const location = 'global';
 
-    if (!projectId) {
+    if (allProjects.length === 0) {
       console.error('[SEARCH] CRITICAL: No project ID found in environment variables!');
       return res.status(500).json({
         success: false,
@@ -2991,18 +3590,133 @@ app.post('/api/v1/search', async (req, res) => {
       });
     }
 
-    console.log(`[SEARCH] Using Project: ${projectId}, Location: ${location}`);
+    console.log(`[SEARCH] Searching across ${allProjects.length} projects: ${allProjects.join(', ')}, Location: ${location}`);
 
-    const request = {
-      name: `projects/${projectId}/locations/${location}`,
-      query: query || '*',
-      pageSize: pageSize || 20,
-      pageToken: pageToken
-    };
+    // Use query directly - Dataplex handles semantic search natively when semanticSearch=true
+    const searchQuery = query || '*';
 
-    const [searchResults, searchRequest, searchResponse] = await client.searchEntries(request);
-    console.log(`[SEARCH] Fetched ${searchResults ? searchResults.length : 0} results from Data Catalog`);
+    console.log(`[SEARCH] Using Dataplex native search with semanticSearch=${semanticSearch ? 'true' : 'false'}`);
 
+    // Search across all projects and merge results
+    const searchPromises = allProjects.map(async (projId) => {
+      try {
+        const request = {
+          name: `projects/${projId}/locations/${location}`,
+          query: searchQuery,
+          pageSize: pageSize || 20,
+          pageToken: pageToken,
+          // Use Dataplex native semantic search - no external AI translation needed
+          semanticSearch: semanticSearch || false
+        };
+        console.log(`[SEARCH] Calling Dataplex for ${projId} with semanticSearch=${request.semanticSearch}`);
+        const [results] = await client.searchEntries(request);
+        console.log(`[SEARCH] Project ${projId}: found ${results ? results.length : 0} results`);
+        return results || [];
+      } catch (err) {
+        console.warn(`[SEARCH] Failed to search project ${projId}:`, err.message);
+        return [];
+      }
+    });
+
+    const allResults = await Promise.all(searchPromises);
+    let searchResults = allResults.flat();
+
+    // Remove duplicates based on entry name
+    const seen = new Set();
+    searchResults = searchResults.filter(entry => {
+      const name = entry?.dataplexEntry?.name || entry?.name;
+      if (!name || seen.has(name)) return false;
+      seen.add(name);
+      return true;
+    });
+
+    console.log(`[SEARCH] Total unique results from all projects: ${searchResults.length}`);
+
+    // --- FALLBACK TO GEMINI IF NATIVE SEMANTIC SEARCH FAILS ---
+    if (semanticSearch && searchResults.length === 0 && query && query !== '*') {
+      try {
+        console.log(`[SEARCH][GEMINI-FALLBACK] Initiating for query: "${query}"`);
+        
+        const aiModel = 'gemini-2.5-flash';
+        const aiLocation = 'us-central1';
+        
+        console.log(`[SEARCH][GEMINI-FALLBACK] Connecting to Vertex AI in ${aiLocation} using model ${aiModel}`);
+        
+        const vertex_ai = new VertexAI({
+          project: PROJECT_ID,
+          location: aiLocation
+        });
+        
+        const generativeModel = vertex_ai.getGenerativeModel({ model: aiModel });
+
+        const aiPrompt = `You are a Dataplex search expert. Translate this natural language query into an optimized Dataplex keyword search query.
+  
+User Request: "${query}"
+
+Instructions:
+1. TRANSLATION: If the user request is in a non-English language (e.g., French like "utilisateurs" or "commande"), translate the concepts to common English technical terms (e.g., "users", "orders", "sales"). Database schemas and metadata are usually in English.
+2. EXPANSION: Expand abstract terms to likely table or column names using OR operations (e.g., "(users OR accounts)", "(orders OR invoices OR sales)").
+3. Use Dataplex filters where appropriate (e.g., "type:TABLE", "system:bigquery").
+4. Maximize the chance of finding results by keeping the base query broad but technically relevant.
+
+Return JSON: {"dataplexQuery": "your optimized query string"}`;
+
+
+        console.log(`[SEARCH][GEMINI-FALLBACK] Sending prompt to AI...`);
+        const aiResult = await generativeModel.generateContent(aiPrompt);
+        
+        if (aiResult.response && aiResult.response.candidates && aiResult.response.candidates.length > 0) {
+          let aiResponseText = aiResult.response.candidates[0].content.parts[0].text.trim();
+          console.log(`[SEARCH][GEMINI-FALLBACK] AI responded: ${aiResponseText}`);
+
+          let cleanJson = aiResponseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+          const searchConfig = JSON.parse(cleanJson);
+          
+          if (searchConfig.dataplexQuery) {
+            console.log(`[SEARCH][GEMINI-FALLBACK] Executing keyword search for: "${searchConfig.dataplexQuery}"`);
+            
+            const fallbackPromises = allProjects.map(async (projId) => {
+              try {
+                const request = {
+                  name: `projects/${projId}/locations/${location}`,
+                  query: searchConfig.dataplexQuery,
+                  pageSize: pageSize || 20,
+                  pageToken: pageToken,
+                  semanticSearch: false 
+                };
+                const [results] = await client.searchEntries(request);
+                return results || [];
+              } catch (err) {
+                console.error(`[SEARCH][GEMINI-FALLBACK] Search failed for project ${projId}:`, err.message);
+                return [];
+              }
+            });
+            
+            const fallbackResultsArr = await Promise.all(fallbackPromises);
+            let fallbackResults = fallbackResultsArr.flat();
+            
+            // Deduplicate
+            const fbSeen = new Set();
+            searchResults = fallbackResults.filter(entry => {
+              const name = entry?.dataplexEntry?.name || entry?.name;
+              if (!name || fbSeen.has(name)) return false;
+              fbSeen.add(name);
+              return true;
+            });
+            
+            console.log(`[SEARCH][GEMINI-FALLBACK] Success! Found ${searchResults.length} results via AI.`);
+          }
+        } else {
+          console.warn(`[SEARCH][GEMINI-FALLBACK] AI returned no candidates!`);
+        }
+      } catch (e) {
+        console.error('[SEARCH][GEMINI-FALLBACK] FATAL ERROR:', e.message);
+      }
+    }
+
+
+    // Dataplex native semantic search already returns results ordered by relevance
+    // No additional AI ranking needed - this was causing slow performance
 
     // Helper for data normalization (used in all access paths) - as requested
     const normalizeEntry = (entry, hasAccess) => {
@@ -3169,9 +3883,10 @@ app.post('/api/v1/search', async (req, res) => {
         console.log(`[SEARCH] Checked ${uniqueDatasets.size} datasets, access map:`, Object.fromEntries(datasetAccessCache));
 
         // Annotate each result based on BigQuery IAM only (single source of truth)
+        // Non-BQ entries (glossaries, data products, etc.) are always accessible — they're metadata
         annotatedResults = (searchResults || []).map(entry => {
           const ds = parseDataset(entry);
-          const hasAccess = ds ? (datasetAccessCache.get(ds.key) || false) : false;
+          const hasAccess = ds ? (datasetAccessCache.get(ds.key) || false) : true;
           return normalizeEntry(entry, hasAccess);
         });
       }
@@ -3185,8 +3900,8 @@ app.post('/api/v1/search', async (req, res) => {
       success: true,
       data: safeResults,
       results: safeResults,
-      nextPageToken: searchResponse?.nextPageToken || '',
-      totalSize: searchResponse?.totalSize || safeResults.length
+      nextPageToken: '', // Pagination not supported with multi-project search
+      totalSize: safeResults.length
     });
 
   } catch (error) {
@@ -3218,20 +3933,12 @@ app.get('/api/v1/accessible-tables', async (req, res) => {
 
     const isAdmin = await checkUserAdminRole(userEmail); // Check if user is a Dataplex Admin
 
-    // 1. Fetch all configured projects (mirroring app-configs logic)
-    const resourceManagerClient = new ProjectsClient();
-    let projects = [];
-    try {
-      const [projectList] = await resourceManagerClient.searchProjects({ pageSize: 2000 }, { autoPaginate: false });
-      // Ensure current PROJECT_ID is included if not in search results
-      const currentExists = projectList.find(p => p.projectId === PROJECT_ID);
-      projects = currentExists ? projectList : [...projectList, { projectId: PROJECT_ID }];
-    } catch (err) {
-      console.warn('[ACCESSIBLE-TABLES] Failed to list projects, falling back to current project:', err.message);
-      projects = [{ projectId: PROJECT_ID }];
-    }
+    // 1. Get all configured projects (main + external)
+    // Use getAllProjects() which includes EXTERNAL_PROJECTS env var
+    const allProjectIds = getAllProjects();
+    const projects = allProjectIds.map(id => ({ projectId: id }));
 
-    console.log(`[ACCESSIBLE-TABLES] Searching across ${projects.length} projects: ${projects.map(p => p.projectId).join(', ')}`);
+    console.log(`[ACCESSIBLE-TABLES] Searching across ${projects.length} projects: ${allProjectIds.join(', ')}`);
 
     // 2. Search for TABLE and VIEW entries in EACH project
     const client = new CatalogServiceClient();
@@ -3532,7 +4239,8 @@ app.get('/api/v1/lineage', async (req, res) => {
 /**
  * GET /api/v1/dataset-relationships
  * Get inferred relationships between tables in a dataset.
- * Uses schema analysis to detect FK-like columns and caches results in Firestore.
+ * Uses BigQuery table metadata schema analysis to detect FK-like columns.
+ * Caches results in Firestore.
  *
  * Query params:
  * - project: GCP project ID (required)
@@ -3567,9 +4275,13 @@ app.get('/api/v1/dataset-relationships', async (req, res) => {
 
     // Fetch all tables in the dataset using Data Catalog search
     console.log(`[RELATIONSHIPS] Cache miss, fetching tables from Data Catalog...`);
-    const dataCatalogClient = new DataCatalogClient();
 
+    const dataCatalogClient = new DataCatalogClient();
+    const bigquery = new BigQuery({ projectId: project });
+
+    // Search for all tables in this dataset
     const searchQuery = `system=bigquery type=TABLE parent:${project}.${dataset}`;
+
     const [searchResults] = await dataCatalogClient.searchCatalog({
       scope: {
         includeProjectIds: [project, PROJECT_ID],
@@ -3584,8 +4296,6 @@ app.get('/api/v1/dataset-relationships', async (req, res) => {
     if (!searchResults || searchResults.length === 0) {
       return res.json({
         relationships: [],
-        nodes: [],
-        edges: [],
         source: 'inferred',
         message: 'No tables found in dataset',
         project,
@@ -3593,42 +4303,78 @@ app.get('/api/v1/dataset-relationships', async (req, res) => {
       });
     }
 
-    // Extract table FQNs
-    const rootTableFqns = searchResults.map(r => r.fullyQualifiedName || `bigquery:${project}.${dataset}.${r.displayName}`);
+    // Fetch schema for each table using BigQuery directly
+    const tables = [];
+    for (const result of searchResults) {
+      try {
+        // Extract table name from FQN like "bigquery:project.dataset.table"
+        const fqn = result.fullyQualifiedName || '';
+        const tableName = fqn.split('.').pop() || result.displayName || 'unknown';
 
-    // Fetch relationships up to 3rd degree via Catalog API
-    let location = process.env.GCP_LOCATION || 'eu'; // Assuming eu based on user's earlier test or config
-    const billingProject = PROJECT_ID; // Billing project for API calls
+        // Get table schema from BigQuery
+        const [metadata] = await bigquery.dataset(dataset).table(tableName).getMetadata();
+        const schema = (metadata.schema?.fields || []).map(f => ({
+          name: f.name,
+          type: f.type
+        }));
 
-    const relationships = await datasetRelationshipService.fetchRelationshipsFromCatalog(
-      billingProject,
-      location,
-      rootTableFqns,
-      3 // max degree
-    );
+        tables.push({
+          name: tableName,
+          fullyQualifiedName: fqn,
+          schema
+        });
+      } catch (entryErr) {
+        console.warn(`[RELATIONSHIPS] Failed to get schema for table ${result.fullyQualifiedName}:`, entryErr.message);
+      }
+    }
 
-    console.log(`[RELATIONSHIPS] Total ${relationships.length} edges found via Catalog API`);
+    console.log(`[RELATIONSHIPS] Got schemas for ${tables.length} tables`);
+
+    // Log table columns for debugging
+    for (const t of tables) {
+      console.log(`[RELATIONSHIPS] Table "${t.name}" columns: ${t.schema.map(c => c.name).join(', ')}`);
+    }
+
+    // Infer relationships from schemas
+    const inferredRelationships = datasetRelationshipService.inferRelationships(tables);
+
+    // Fetch relationships from DataScans
+    let location = process.env.GCP_LOCATION || '-';
+    const scanRelationships = await datasetRelationshipService.fetchDataScanRelationships(project, location, tables);
+
+    // Combine avoiding duplicates
+    const relationships = [...inferredRelationships];
+    for (const scanRel of scanRelationships) {
+      const exists = relationships.some(r =>
+        (r.table1 === scanRel.table1 && r.table2 === scanRel.table2) ||
+        (r.table1 === scanRel.table2 && r.table2 === scanRel.table1)
+      );
+      if (!exists) {
+        relationships.push(scanRel);
+      }
+    }
+
+    console.log(`[RELATIONSHIPS] Total ${relationships.length} relationships (${inferredRelationships.length} inferred, ${scanRelationships.length} from DataScans)`);
 
     // Cache the results
-    await datasetRelationshipService.cacheRelationships(project, dataset, relationships, searchResults.length);
+    if (relationships.length > 0) {
+      await datasetRelationshipService.cacheRelationships(project, dataset, relationships, tables);
+    }
 
-    // Build unique nodes from edges + root tables
+    // Build unique nodes from edges + all tables
     const nodeSet = new Set();
-    rootTableFqns.forEach(fqn => {
-      const parts = fqn.replace('bigquery:', '').replace('bigquery://', '').split('.');
-      if (parts.length >= 3) nodeSet.add(parts[2]);
-    });
+    tables.forEach(t => nodeSet.add(t.name));
     relationships.forEach(r => {
       nodeSet.add(r.table1);
       nodeSet.add(r.table2);
     });
 
     res.json({
-      relationships, // Keep backward compatible field
+      relationships,
       nodes: Array.from(nodeSet).map(id => ({ id, label: id })),
       edges: relationships,
-      source: 'catalog_documentation',
-      tableCount: searchResults.length,
+      source: 'inferred',
+      tableCount: tables.length,
       project,
       dataset
     });
@@ -3802,6 +4548,90 @@ app.post('/api/v1/check-access', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/v1/check-entry-access
+ * Check if a user has access to an entry by its Dataplex entry name.
+ * Accepts entryName as query param (e.g. projects/P/locations/L/entryGroups/G/entries/ID).
+ * Reuses the same IAM check logic as /check-access.
+ */
+app.get('/api/v1/check-entry-access', async (req, res) => {
+  try {
+    const { entryName } = req.query;
+    const userEmail = req.headers['x-user-email'];
+
+    if (!entryName || !userEmail) {
+      return res.status(400).json({ hasAccess: false, error: 'entryName and x-user-email header required' });
+    }
+
+    // SUPER_ADMIN bypass
+    const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL;
+    if (SUPER_ADMIN_EMAIL && userEmail.toLowerCase().includes(SUPER_ADMIN_EMAIL.toLowerCase())) {
+      return res.json({ hasAccess: true, level: 'super_admin' });
+    }
+
+    // Extract project from entryName path: projects/{project}/locations/...
+    const nameParts = entryName.split('/');
+    const projectIndex = nameParts.indexOf('projects');
+    let targetProject = projectIndex !== -1 ? nameParts[projectIndex + 1] : null;
+
+    // Try to extract dataset from URL-encoded entry ID
+    // Entry IDs for BigQuery tables are often:
+    //   bigquery.googleapis.com%2Fprojects%2FP%2Fdatasets%2FDS%2Ftables%2FT
+    const entriesIndex = nameParts.indexOf('entries');
+    let datasetId = null;
+    if (entriesIndex !== -1 && nameParts[entriesIndex + 1]) {
+      const entryId = decodeURIComponent(nameParts[entriesIndex + 1]);
+      const dsMatch = entryId.match(/datasets\/([^/]+)\//);
+      if (dsMatch) datasetId = dsMatch[1];
+      const projMatch = entryId.match(/projects\/([^/]+)\//);
+      if (projMatch && !targetProject) targetProject = projMatch[1];
+    }
+
+    if (!targetProject) {
+      return res.json({ hasAccess: false, reason: 'Could not determine project from entryName' });
+    }
+
+    console.log(`[CHECK-ENTRY-ACCESS] Checking ${userEmail} on project=${targetProject}, dataset=${datasetId}`);
+
+    const isOwner = await verifyUserAccess(targetProject, userEmail, 'roles/owner');
+    const isEditor = await verifyUserAccess(targetProject, userEmail, 'roles/editor');
+    const isViewer = await verifyUserAccess(targetProject, userEmail, 'roles/viewer');
+    const isBqViewer = await verifyUserAccess(targetProject, userEmail, 'roles/bigquery.dataViewer');
+    const isBqAdmin = await verifyUserAccess(targetProject, userEmail, 'roles/bigquery.admin');
+
+    if (isOwner || isEditor || isViewer || isBqViewer || isBqAdmin) {
+      return res.json({ hasAccess: true, level: 'project' });
+    }
+
+    if (datasetId) {
+      try {
+        const bq = new BigQuery({ projectId: targetProject });
+        const dataset = bq.dataset(datasetId);
+        const [policy] = await dataset.getIamPolicy();
+        const userMember = `user:${userEmail}`;
+        const hasDatasetAccess = policy.bindings?.some(binding => {
+          const meaningfulRoles = [
+            'roles/bigquery.dataViewer', 'roles/bigquery.dataEditor',
+            'roles/bigquery.dataOwner', 'roles/bigquery.admin',
+            'roles/viewer', 'roles/editor', 'roles/owner'
+          ];
+          return meaningfulRoles.includes(binding.role) && binding.members?.includes(userMember);
+        });
+        if (hasDatasetAccess) {
+          return res.json({ hasAccess: true, level: 'dataset' });
+        }
+      } catch (dsError) {
+        console.warn(`[CHECK-ENTRY-ACCESS] Dataset IAM check failed: ${dsError.message}`);
+      }
+    }
+
+    return res.json({ hasAccess: false, reason: 'No matching IAM bindings found' });
+  } catch (error) {
+    console.error('[CHECK-ENTRY-ACCESS] Error:', error);
+    return res.status(500).json({ hasAccess: false, error: error.message });
+  }
+});
+
 app.post('/api/v1/access-request', async (req, res) => {
   try {
     const { assetName, linkedResource, message, requesterEmail, projectId, projectAdmin, assetType } = req.body;
@@ -3861,7 +4691,7 @@ app.post('/api/v1/access-request', async (req, res) => {
 
     // Create access request object (with placeholder for ServiceNow)
     const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    let snTicket = { number: '', sys_id: '' };
+    let snTicket = { number: '', sys_id: '', state: '', link: '' };
     if (req.body.createServiceNowTicket !== false) {
       try {
         console.log('[ACCESS-REQUEST] Creating ServiceNow ticket...');
@@ -3869,9 +4699,12 @@ app.post('/api/v1/access-request', async (req, res) => {
           requestId,
           requesterEmail,
           assetName,
+          assetType: assetType || 'BigQuery Table',
+          projectId,
+          projectAdmin: projectAdmin || [],
           message: message || 'Access Request via Dataplex UI'
         });
-        console.log('[ACCESS-REQUEST] ServiceNow ticket created:', snTicket.number);
+        console.log('[ACCESS-REQUEST] ServiceNow ticket created:', snTicket.number, 'State:', snTicket.state);
       } catch (snErr) {
         console.warn('[ACCESS-REQUEST] ServiceNow integration failed, continuing without ticket:', snErr.message);
       }
@@ -3891,7 +4724,9 @@ app.post('/api/v1/access-request', async (req, res) => {
       status: 'pending',
       autoApproved: false,
       serviceNowTicket: snTicket.number,
-      serviceNowSysId: snTicket.sys_id
+      serviceNowSysId: snTicket.sys_id,
+      serviceNowState: snTicket.state || '',
+      serviceNowLink: snTicket.link || ''
     };
 
     // Store the request in Firestore
@@ -3918,6 +4753,19 @@ app.post('/api/v1/access-request', async (req, res) => {
         console.error('Failed to send in-app notifications:', notifError);
         // Don't fail the request if notifications fail
       }
+    }
+
+    // Send confirmation notification to the requester
+    try {
+      await notificationService.createNotification({
+        recipientEmail: requesterEmail,
+        type: 'NEW_REQUEST',
+        title: 'Access Request Submitted',
+        message: `Your access request for ${assetName} has been submitted and is pending review.`,
+        metadata: { requestId: accessRequest.id, assetName, projectId }
+      });
+    } catch (notifErr) {
+      console.warn('[ACCESS-REQUEST] Requester confirmation notification failed:', notifErr.message);
     }
 
     // Send access request email
@@ -3965,6 +4813,7 @@ app.post('/api/v1/access-request', async (req, res) => {
 /**
  * GET /api/v1/access-requests
  * Get all access requests with filtering based on user role
+ * Data owners automatically see requests for their datasets
  */
 app.get('/api/v1/access-requests', async (req, res) => {
   try {
@@ -3981,10 +4830,47 @@ app.get('/api/v1/access-requests', async (req, res) => {
     if (status) filters.status = status.toUpperCase();
     if (projectId) filters.projectId = projectId;
 
-    if (userRole === 'admin') {
+    // Check if user is a regular admin
+    const adminRole = await adminService.resolveAdminRole(userEmail);
+    const isRegularAdmin = adminRole && (adminRole.role === 'super-admin' || adminRole.role === 'project-admin');
+
+    if (userRole === 'admin' && isRegularAdmin) {
+      // Regular admins see all requests (or filtered by their assigned projects)
       // Fetch all
-    } else if (userRole === 'manager') {
-      if (projectId) filters.projectId = projectId;
+    } else if (userRole === 'admin' || userRole === 'manager') {
+      // User claims admin role - check if they're a data owner
+      const allProjects = (process.env.EXTERNAL_PROJECTS || '').split(/[\s,]+/).filter(Boolean);
+      allProjects.unshift(process.env.GOOGLE_CLOUD_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT);
+
+      const ownedDatasets = await adminService.getOwnedDatasets(userEmail, allProjects);
+
+      if (ownedDatasets.length > 0) {
+        // User is a data owner - fetch all requests, then filter to their datasets
+        let allRequests = await getAccessRequests(filters);
+
+        // Filter to only show requests for datasets they own
+        allRequests = allRequests.filter(request => {
+          const assetName = request.assetName || '';
+          const cleanName = assetName.replace(/^bigquery:/, '');
+          const parts = cleanName.split('.');
+          if (parts.length >= 2) {
+            const reqProjectId = parts[0];
+            const reqDatasetId = parts[1];
+            return ownedDatasets.some(d => d.projectId === reqProjectId && d.datasetId === reqDatasetId);
+          }
+          return false;
+        });
+
+        return res.status(200).json({
+          success: true,
+          data: allRequests,
+          count: allRequests.length,
+          isDataOwner: true
+        });
+      } else {
+        // Not admin and not data owner - show only their own requests
+        filters.requesterEmail = userEmail;
+      }
     } else {
       filters.requesterEmail = userEmail;
     }
@@ -4061,16 +4947,46 @@ app.post('/api/v1/access-request/update', async (req, res) => {
           datasetId = parts[1];
         }
       }
+
+      // Fallback for Dataplex entries (glossary terms, data products, etc.)
+      // Look up the entry to find its underlying BigQuery resource
+      if (!iamProjectId && linkedResource.includes('/entryGroups/')) {
+        try {
+          console.log(`[UPDATE] linkedResource is a Dataplex entry path, looking up BQ resource: ${linkedResource}`);
+          const lookupClient = new CatalogServiceClient();
+          const [entry] = await lookupClient.getEntry({ name: linkedResource, view: 'FULL' });
+          const entryResource = entry?.entrySource?.resource || '';
+          const entryFqn = entry?.fullyQualifiedName || '';
+
+          // Try to extract BQ project/dataset from the entry's actual resource
+          const resBqMatch = entryResource.match(/projects\/([^/]+)\/datasets\/([^/]+)/);
+          if (resBqMatch && resBqMatch.length >= 3) {
+            iamProjectId = resBqMatch[1];
+            datasetId = resBqMatch[2];
+            console.log(`[UPDATE] Resolved BQ resource from entry: project=${iamProjectId}, dataset=${datasetId}`);
+          } else if (entryFqn.includes('bigquery:')) {
+            const fqnClean = entryFqn.replace('bigquery://', '').replace('bigquery:', '');
+            const fqnParts = fqnClean.split('.');
+            if (fqnParts.length >= 2) {
+              iamProjectId = fqnParts[0];
+              datasetId = fqnParts[1];
+              console.log(`[UPDATE] Resolved BQ resource from FQN: project=${iamProjectId}, dataset=${datasetId}`);
+            }
+          }
+        } catch (lookupErr) {
+          console.warn(`[UPDATE] Could not look up Dataplex entry for IAM: ${lookupErr.message}`);
+        }
+      }
     }
 
     // --- DUAL-APPROVAL LOGIC ---
     let effectiveStatus = status;
     let currentApprovals = originalRequest.approvals || [];
 
-    // Calculate dynamic threshold based on number of project admins (stewards)
-    // Rule: 1 steward = 1 approval needed, 2+ stewards = 2 approvals needed, No stewards = 2 (fallback) 
+    // Calculate dynamic threshold based on number of data stewards
+    // Rule: 0 or 1 steward = 1 approval needed, 2+ stewards = 2 approvals needed
     const stewardList = originalRequest.projectAdmin || [];
-    const threshold = Math.max(1, Math.min(stewardList.length || 2, 2));
+    const threshold = stewardList.length >= 2 ? 2 : 1;
 
     if (status === 'APPROVED') {
       // Prevent double-approvals from same user
@@ -4088,22 +5004,22 @@ app.post('/api/v1/access-request/update', async (req, res) => {
         effectiveStatus = 'PARTIALLY_APPROVED';
         console.log(`[UPDATE] Partial Approval (${currentApprovals.length}/${threshold}) by ${reviewerEmail}. Status set to PARTIALLY_APPROVED.`);
         if (originalRequest.serviceNowSysId) {
-          serviceNowService.addComment(originalRequest.serviceNowSysId, `Partial Approval (${currentApprovals.length}/${threshold}) by ${reviewerEmail}. Waiting for consensus.`);
+          serviceNowService.partialApproveTicket(originalRequest.serviceNowSysId, reviewerEmail, currentApprovals.length, threshold);
         }
       } else {
         effectiveStatus = 'APPROVED';
         console.log(`[UPDATE] Consensus reached (${currentApprovals.length}/${threshold})! Final reviewer: ${reviewerEmail}. Proceeding to grant access.`);
         if (originalRequest.serviceNowSysId) {
-          serviceNowService.addComment(originalRequest.serviceNowSysId, `Consensus reached! Approved by ${reviewerEmail}. Provisioning access.`);
+          serviceNowService.approveTicket(originalRequest.serviceNowSysId, reviewerEmail);
         }
       }
     } else if (status === 'REJECTED') {
       if (originalRequest.serviceNowSysId) {
-        serviceNowService.addComment(originalRequest.serviceNowSysId, `Access Request Rejected by ${reviewerEmail}. Result: REJECTED.`);
+        serviceNowService.rejectTicket(originalRequest.serviceNowSysId, reviewerEmail, adminNote);
       }
     } else if (status === 'REVOKED') {
       if (originalRequest.serviceNowSysId) {
-        serviceNowService.addComment(originalRequest.serviceNowSysId, `Access Revoked by ${reviewerEmail}. Result: REVOKED.`);
+        serviceNowService.closeTicket(originalRequest.serviceNowSysId, reviewerEmail, 'Access revoked');
       }
     }
 
@@ -4191,6 +5107,19 @@ app.post('/api/v1/access-request/update', async (req, res) => {
       console.warn('[UPDATE] Email notification failed (non-blocking):', emailError.message);
     }
 
+    // --- SEND IN-APP NOTIFICATION ---
+    try {
+      if (effectiveStatus === 'APPROVED') {
+        await notificationService.notifyAccessApproved(updatedRequest, reviewerEmail);
+      } else if (effectiveStatus === 'REJECTED') {
+        await notificationService.notifyAccessRejected(updatedRequest, reviewerEmail, adminNote);
+      } else if (effectiveStatus === 'REVOKED') {
+        await notificationService.notifyAccessRevoked(updatedRequest, reviewerEmail);
+      }
+    } catch (notifError) {
+      console.warn('[UPDATE] In-app notification failed (non-blocking):', notifError.message);
+    }
+
     return res.json({
       success: true,
       data: updatedRequest,
@@ -4210,22 +5139,95 @@ app.post('/api/v1/access-request/update', async (req, res) => {
  * Webhook for ServiceNow integration.
  * Enables Option B: Directly approving requests from ServiceNow.
  */
+/**
+ * GET /api/v1/servicenow/ticket/:requestId
+ * Query the ServiceNow ticket status for a given access request
+ */
+app.get('/api/v1/servicenow/ticket/:requestId', async (req, res) => {
+  try {
+    const { requestId } = req.params;
+
+    // First check Firestore for the sys_id
+    const accessRequest = await getAccessRequestById(requestId);
+    if (!accessRequest) {
+      return res.status(404).json({ success: false, error: 'Access request not found' });
+    }
+
+    const sysId = accessRequest.serviceNowSysId;
+    if (!sysId || sysId === 'mock' || sysId === 'error') {
+      return res.json({
+        success: true,
+        ticket: {
+          number: accessRequest.serviceNowTicket || 'N/A',
+          state: 'Not tracked in ServiceNow',
+          link: null
+        }
+      });
+    }
+
+    // Query ServiceNow for live status
+    const ticket = await serviceNowService.getTicket(sysId);
+    if (!ticket) {
+      return res.json({ success: true, ticket: { number: accessRequest.serviceNowTicket, state: 'Unable to fetch', link: null } });
+    }
+
+    return res.json({ success: true, ticket });
+  } catch (error) {
+    console.error('[SN-STATUS] Error:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * GET /api/v1/servicenow/open-tickets
+ * List all open ServiceNow tickets (for admin dashboard)
+ */
+app.get('/api/v1/servicenow/open-tickets', async (req, res) => {
+  try {
+    const tickets = await serviceNowService.getOpenTickets();
+    return res.json({ success: true, tickets, count: tickets.length });
+  } catch (error) {
+    console.error('[SN-OPEN] Error:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * POST /api/v1/access-request/webhook
+ * Webhook endpoint for ServiceNow to call back when a ticket state changes.
+ * ServiceNow Business Rule (REST Message) should POST here on state change.
+ */
 app.post('/api/v1/access-request/webhook', async (req, res) => {
   try {
+    // Support both direct fields and ServiceNow's format
     const { requestId, status, reviewerEmail, secret } = req.body;
+    const correlationId = requestId || req.body[serviceNowService._field('correlation_id')] || req.body.correlation_id;
+    const snState = status || req.body.state;
 
-    // Security check (if secret is configured)
-    const webhookSecret = process.env.SERVICENOW_WEBHOOK_SECRET;
-    if (webhookSecret && secret !== webhookSecret) {
-      console.warn('[WEBHOOK] Invalid secret provided in webhook call');
-      return res.status(401).json({ success: false, error: 'Unauthorized: Invalid webhook secret' });
+    // Security check
+    if (!serviceNowService.validateWebhook(req) && !(process.env.SERVICENOW_WEBHOOK_SECRET && secret === process.env.SERVICENOW_WEBHOOK_SECRET)) {
+      console.warn('[WEBHOOK] Unauthorized webhook call');
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
 
-    if (!requestId || !status) {
-      return res.status(400).json({ success: false, error: 'Missing requestId or status in payload' });
+    if (!correlationId || !snState) {
+      return res.status(400).json({ success: false, error: 'Missing requestId/correlation_id or status in payload' });
     }
 
-    console.log(`[WEBHOOK] Received update for request ${requestId} from ServiceNow. New status: ${status}`);
+    // Map ServiceNow state codes to our status
+    const { SN_STATES } = require('./services/serviceNowService');
+    const stateMap = {
+      [SN_STATES.APPROVED]: 'APPROVED',
+      [SN_STATES.REJECTED]: 'REJECTED',
+      [SN_STATES.CLOSED]: 'APPROVED', // Closed usually means resolved/approved
+      [SN_STATES.CANCELLED]: 'REJECTED',
+      'APPROVED': 'APPROVED',
+      'REJECTED': 'REJECTED',
+      'CLOSED': 'APPROVED'
+    };
+    const mappedStatus = stateMap[snState] || stateMap[snState.toUpperCase()] || snState.toUpperCase();
+
+    console.log(`[WEBHOOK] Received: correlationId=${correlationId}, snState=${snState}, mappedStatus=${mappedStatus}, reviewer=${reviewerEmail || 'ServiceNow'}`);
 
     // Fetch original request
     const originalRequest = await getAccessRequestById(requestId);
@@ -4311,6 +5313,7 @@ app.post('/api/v1/access/revoke', async (req, res) => {
   try {
     const { grantId } = req.body;
     const revokerEmail = req.headers['x-user-email'];
+    const userAccessToken = req.headers.authorization?.split(' ')[1];
     console.log(`[REVOKE] Request for grantId=${grantId} by ${revokerEmail}`);
 
     if (!grantId) {
@@ -4327,19 +5330,12 @@ app.post('/api/v1/access/revoke', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Access already revoked' });
     }
 
-    // 2. Check if revoker is admin for this project
-    const isAdmin = await adminService.isProjectAdmin(revokerEmail, grant.gcpProjectId);
-    if (!isAdmin) {
-      return res.status(403).json({ success: false, error: 'Not authorized to revoke access for this project' });
-    }
-
-    // 3. Remove from BigQuery dataset-level IAM (matching how we grant)
-    let revokeIamStatus = 'NOT_ATTEMPTED';
+    // 2. Parse datasetId from assetName first (needed for permission check)
     const assetName = grant.assetName;
     const userEmail = grant.userEmail;
+    let iamProjectId, datasetId;
 
     if (assetName) {
-      let iamProjectId, datasetId;
       const bqMatch = assetName.match(/projects\/([^/]+)\/datasets\/([^/]+)/);
       if (bqMatch) {
         iamProjectId = bqMatch[1];
@@ -4349,33 +5345,53 @@ app.post('/api/v1/access/revoke', async (req, res) => {
         const parts = clean.split('.');
         if (parts.length >= 2) { iamProjectId = parts[0]; datasetId = parts[1]; }
       }
+    }
 
-      if (iamProjectId && datasetId) {
-        try {
-          const bq = new BigQuery({ projectId: iamProjectId });
-          const dataset = bq.dataset(datasetId);
-          const [metadata] = await dataset.getMetadata();
-          let accessList = metadata.access || [];
+    // 3. Check if revoker is admin or data owner for this dataset
+    const canManage = await adminService.canManageDatasetAccess(revokerEmail, grant.gcpProjectId, datasetId);
+    if (!canManage) {
+      return res.status(403).json({ success: false, error: 'Not authorized to revoke access for this dataset' });
+    }
 
-          const initialLength = accessList.length;
-          accessList = accessList.filter(a => a.userByEmail?.toLowerCase() !== userEmail.toLowerCase());
+    // 4. Remove from BigQuery dataset-level IAM (matching how we grant)
+    let revokeIamStatus = 'NOT_ATTEMPTED';
 
-          if (accessList.length < initialLength) {
-            await dataset.setMetadata({ access: accessList });
-            revokeIamStatus = 'SUCCESS';
-            console.log(`[REVOKE] IAM access removed for ${userEmail} on ${datasetId}`);
-          } else {
-            revokeIamStatus = 'NOT_FOUND_IN_IAM';
-            console.log(`[REVOKE] User ${userEmail} not found in dataset ${datasetId} IAM`);
-          }
-        } catch (iamErr) {
-          console.warn('[REVOKE] IAM removal failed:', iamErr.message);
-          revokeIamStatus = 'FAILED';
+    if (iamProjectId && datasetId) {
+      try {
+        // Use admin's OAuth token to revoke access (admin needs bigquery.dataOwner on dataset)
+        let bq;
+        if (userAccessToken) {
+          const { OAuth2Client } = require('google-auth-library');
+          const oauth2Client = new OAuth2Client();
+          oauth2Client.setCredentials({ access_token: userAccessToken });
+          bq = new BigQuery({ projectId: iamProjectId, authClient: oauth2Client });
+          console.log(`[REVOKE] Using admin's OAuth token`);
+        } else {
+          bq = new BigQuery({ projectId: iamProjectId });
+          console.log(`[REVOKE] Using service account (no user token)`);
         }
+        const dataset = bq.dataset(datasetId);
+        const [metadata] = await dataset.getMetadata();
+        let accessList = metadata.access || [];
+
+        const initialLength = accessList.length;
+        accessList = accessList.filter(a => a.userByEmail?.toLowerCase() !== userEmail.toLowerCase());
+
+        if (accessList.length < initialLength) {
+          await dataset.setMetadata({ access: accessList });
+          revokeIamStatus = 'SUCCESS';
+          console.log(`[REVOKE] IAM access removed for ${userEmail} on ${datasetId}`);
+        } else {
+          revokeIamStatus = 'NOT_FOUND_IN_IAM';
+          console.log(`[REVOKE] User ${userEmail} not found in dataset ${datasetId} IAM`);
+        }
+      } catch (iamErr) {
+        console.warn('[REVOKE] IAM removal failed:', iamErr.message);
+        revokeIamStatus = 'FAILED';
       }
     }
 
-    // 4. Update Firestore via grantedAccessService (uses correct 'granted-accesses' collection)
+    // 5. Update Firestore via grantedAccessService (uses correct 'granted-accesses' collection)
     const revokedGrant = await grantedAccessService.revokeAccess(grantId, revokerEmail);
 
     // 5. Send notification (non-blocking)
@@ -4410,13 +5426,29 @@ app.get('/api/v1/admin/check', async (req, res) => {
       return res.status(400).json({ success: false, error: 'User email is required' });
     }
 
-    // Use centralized resolution logic (Firestore -> Env -> IAM)
+    // Use centralized resolution logic (Firestore -> Env -> IAM -> Data Steward)
     const adminRole = await adminService.resolveAdminRole(userEmail);
+
+    // Also check if user is a data owner (has OWNER role on any datasets)
+    let ownedDatasets = [];
+    let isDataOwner = false;
+
+    if (!adminRole) {
+      // Only check data ownership if not already an admin (to avoid extra API calls)
+      const allProjects = (process.env.EXTERNAL_PROJECTS || '').split(/[\s,]+/).filter(Boolean);
+      allProjects.unshift(process.env.GOOGLE_CLOUD_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT);
+
+      ownedDatasets = await adminService.getOwnedDatasets(userEmail, allProjects);
+      isDataOwner = ownedDatasets.length > 0;
+    }
 
     return res.status(200).json({
       success: true,
       isAdmin: adminRole !== null,
-      role: adminRole
+      isDataOwner: isDataOwner,
+      hasAdminCapabilities: adminRole !== null || isDataOwner,
+      role: adminRole,
+      ownedDatasets: ownedDatasets
     });
   } catch (error) {
     console.error('Error checking admin status:', error);
@@ -4625,6 +5657,7 @@ app.post('/api/v1/access/bulk-approve', async (req, res) => {
   try {
     const { requestIds } = req.body;
     const reviewerEmail = req.headers['x-user-email'];
+    const userAccessToken = req.headers.authorization?.split(' ')[1];
 
     if (!requestIds || !Array.isArray(requestIds) || requestIds.length === 0) {
       return res.status(400).json({ success: false, error: 'Request IDs array is required' });
@@ -4643,16 +5676,42 @@ app.post('/api/v1/access/bulk-approve', async (req, res) => {
           continue;
         }
 
-        // Check admin permission
-        const isAdmin = await adminService.isProjectAdmin(reviewerEmail, fullRequest.gcpProjectId);
-        if (!isAdmin) {
+        // Parse datasetId from assetName first (needed for permission check)
+        // Formats: "bigquery:project.dataset.table", "project.dataset.table", etc.
+        let datasetId = null;
+        const assetName = fullRequest.assetName || '';
+        const cleanName = assetName.replace(/^bigquery:/, '');
+        const parts = cleanName.split('.');
+        if (parts.length >= 2) {
+          datasetId = parts[1]; // project.dataset.table -> dataset
+        }
+
+        // Check admin permission (includes data owners)
+        const canManage = await adminService.canManageDatasetAccess(reviewerEmail, fullRequest.gcpProjectId, datasetId);
+        if (!canManage) {
           results.failed.push({ requestId, error: 'Not authorized' });
           continue;
         }
 
-        // Grant IAM access
-        const role = fullRequest.requestedRole || 'roles/bigquery.dataViewer';
-        await grantIamAccess(fullRequest.gcpProjectId, fullRequest.requesterEmail, role);
+        // Grant dataset-level access (more granular than project IAM)
+        const requestedRole = fullRequest.requestedRole || 'roles/bigquery.dataViewer';
+        // Map IAM role to BigQuery dataset role
+        let datasetRole = 'READER';
+        if (requestedRole.includes('dataEditor') || requestedRole.includes('WRITER')) {
+          datasetRole = 'WRITER';
+        } else if (requestedRole.includes('dataOwner') || requestedRole.includes('OWNER')) {
+          datasetRole = 'OWNER';
+        }
+
+        if (datasetId) {
+          // Use admin's OAuth token to grant access (admin needs bigquery.dataOwner on dataset)
+          await grantDatasetAccess(fullRequest.gcpProjectId, datasetId, fullRequest.requesterEmail, datasetRole, userAccessToken);
+        } else {
+          // Fallback to project-level if can't parse dataset
+          console.warn(`[BULK-APPROVE] Could not parse datasetId from ${assetName}, falling back to project IAM`);
+          await grantIamAccess(fullRequest.gcpProjectId, fullRequest.requesterEmail, requestedRole);
+        }
+        const role = requestedRole;
 
         // Create granted access record
         const grantedAccess = await grantedAccessService.createGrantedAccess({
@@ -4713,9 +5772,18 @@ app.post('/api/v1/access/bulk-reject', async (req, res) => {
           continue;
         }
 
-        // Check admin permission
-        const isAdmin = await adminService.isProjectAdmin(reviewerEmail, fullRequest.gcpProjectId);
-        if (!isAdmin) {
+        // Parse datasetId from assetName (needed for permission check)
+        let datasetId = null;
+        const assetName = fullRequest.assetName || '';
+        const cleanName = assetName.replace(/^bigquery:/, '');
+        const parts = cleanName.split('.');
+        if (parts.length >= 2) {
+          datasetId = parts[1];
+        }
+
+        // Check admin permission (includes data owners)
+        const canManage = await adminService.canManageDatasetAccess(reviewerEmail, fullRequest.gcpProjectId, datasetId);
+        if (!canManage) {
           results.failed.push({ requestId, error: 'Not authorized' });
           continue;
         }
@@ -4784,6 +5852,7 @@ app.get('/api/v1/notifications', async (req, res) => {
     if (limit) filters.limit = parseInt(limit, 10);
 
     const notifications = await notificationService.getNotifications(userEmail, filters);
+    console.log(`[NOTIFICATIONS] GET for ${userEmail}: ${notifications.length} notifications found`);
 
     return res.status(200).json({
       success: true,
@@ -4906,17 +5975,19 @@ app.get('/api/access-request/health', (req, res) => {
   });
 });
 
-// Basic health check endpoint
+// Basic health check endpoint with version for deployment verification
+const BUILD_VERSION = '3.5-' + new Date().toISOString().slice(0, 16).replace(/[:-]/g, '');
 app.get('/api/health', (req, res) => {
-  res.status(200).send('API is running!');
+  res.json({ status: 'ok', version: BUILD_VERSION });
 });
 // Basic health check endpoint
 app.get('/', (req, res) => {
   res.redirect('/home'); // Redirects to the /home route
 });
 
-// For any other routes, serve the React index.html
+// For any other routes, serve the React index.html (no-cache to ensure latest build)
 app.get('{*path}', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 

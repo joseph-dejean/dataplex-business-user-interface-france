@@ -2,10 +2,9 @@
 import { type BaseQueryApi, createApi, type FetchArgs, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 import type { RootState } from '../store';
 import { isAuthenticationError } from '../../services/authErrorService';
-import { URLS } from '../../constants/urls';
 
 const baseQuery = fetchBaseQuery({
-  baseUrl: URLS.API_URL,
+  baseUrl: import.meta.env.VITE_API_URL,
   prepareHeaders: (headers, { getState }) => {
     const token = (getState() as RootState).user.token;
 
@@ -19,7 +18,7 @@ const baseQuery = fetchBaseQuery({
 
 const baseQueryWithReauth = async (args: string | FetchArgs, api: BaseQueryApi, extraOptions: {}) => {
   const result = await baseQuery(args, api, extraOptions);
-
+  
   // Check for authentication errors
   if (result.error && isAuthenticationError(result.error)) {
     api.dispatch({ type: 'auth/authenticationError' });

@@ -12,6 +12,7 @@ import projectsReducer from '../features/projects/projectsSlice';
 import glossariesReducer from '../features/glossaries/glossariesSlice';
 import dataProductsReducer from '../features/dataProducts/dataProductsSlice';
 import adminReducer from '../features/admin/adminSlice';
+import insightsReducer from '../features/tableInsights/tableInsightsSlice';
 import { loadStateFromStorage, saveStateToStorage } from '../utils/persistence';
 import { authMiddleware } from '../middleware/authMiddleware';
 
@@ -34,6 +35,7 @@ const store = configureStore({
     glossaries: glossariesReducer,
     dataProducts: dataProductsReducer,
     admin: adminReducer,
+    insights: insightsReducer,
   },
   preloadedState: persistedState,
   middleware: (getDefaultMiddleware) => 

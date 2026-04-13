@@ -1,117 +1,114 @@
 import React from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Search, ChatBubbleOutline, Assignment, Settings as SettingsIcon } from '@mui/icons-material';
 import SidebarMenuItem from './SidebarMenuItem';
 import { useAccessRequest } from '../../contexts/AccessRequestContext';
 import './GlobalSidebar.css';
-import { fetchDataProductsList } from '../../features/dataProducts/dataProductsSlice';
-import { useDispatch } from 'react-redux';
-import { type AppDispatch } from '../../app/store';
+import { fetchDataProductsList, resetDataProductsUIState } from '../../features/dataProducts/dataProductsSlice';
+import { useDispatch, useSelector } from 'react-redux';
+import { type AppDispatch, type RootState } from '../../app/store';
 import { useAuth } from '../../auth/AuthProvider';
+import { changeMode } from '../../features/user/userSlice';
+import { DarkMode, LightMode } from '@mui/icons-material';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
+import { SIDEBAR_ICONS } from '../../constants/icons';
 
-interface GlobalSidebarProps {
-  isHomePage?: boolean;
-}
-
-const GlobalSidebar: React.FC<GlobalSidebarProps> = ({ isHomePage = false }) => {
+const GlobalSidebar: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { isAccessPanelOpen } = useAccessRequest();
-
-
-  // Determine active states based on current route
-  const isSearchActive = ['/home', '/search', '/view-details'].includes(location.pathname);
-
-  const isDataProductsActive = location.pathname.startsWith('/data-products');
-  const isChatActive = location.pathname === '/global-chat';
   const dispatch = useDispatch<AppDispatch>();
   const { user } = useAuth();
+  const mode = useSelector((state: RootState) => state.user.mode);
+  const isDarkModeEnabled = import.meta.env.VITE_FEATURE_DARK_MODE === 'true';
 
-  const handleSearchClick = () => {
-    navigate('/search');
-  };
-
-
-
-  const handleLogoClick = () => {
-    navigate('/home');
-  };
+  const isHomeActive = location.pathname === '/home';
+  const isDataProductsActive = location.pathname.startsWith('/data-products');
+  const isChatActive = location.pathname === '/global-chat';
+  const isAccessRequestsActive = location.pathname === '/access-requests';
 
   const handleDataProducts = () => {
+    dispatch(resetDataProductsUIState());
     dispatch(fetchDataProductsList({ id_token: user?.token }));
     navigate('/data-products');
   };
 
   return (
     <nav
-      className={`global-sidebar ${isHomePage ? 'partial-height' : 'full-height'}`}
+      className="global-sidebar"
       style={{
         zIndex: isAccessPanelOpen ? 999 : 1200,
       }}
     >
-      {!isHomePage && (
-        <div className="sidebar-logo-container" onClick={handleLogoClick}>
-          <img
-            src="/assets/svg/dataplex-logo-icon.svg"
-            alt="Dataplex"
-            className="logo-icon-only"
-          />
-          <div className="sidebar-logo-text">
-            <span className="sidebar-logo-title">Dataplex</span>
-            <span className="sidebar-practice-label">Catalog France Practice</span>
-          </div>
-        </div>
-      )}
-
       {/* Menu Items */}
       <div className="sidebar-menu-items">
-        {/* Search */}
         <SidebarMenuItem
-          icon={<Search sx={{ fontSize: 20 }} />}
-          label="Search"
-          isActive={isSearchActive}
-          onClick={handleSearchClick}
+          icon={SIDEBAR_ICONS.HOME}
+          label="Home"
+          isActive={isHomeActive}
+          onClick={() => navigate('/home')}
         />
 
-
-
-        {/* Data Products */}
         <SidebarMenuItem
-          icon={<img src="/assets/svg/data-products-icon.svg" alt="Data Products" style={{ width: 20, height: 20 }} />}
-          label="Data Products"
+          icon={SIDEBAR_ICONS.DATA_PRODUCTS}
+          label={<>Data<br />Products</>}
           isActive={isDataProductsActive}
           disabled={false}
-          multiLine={false}
-          onClick={() => { handleDataProducts(); }}
+          multiLine={true}
+          onClick={handleDataProducts}
         />
 
-        {/* Chat */}
         <SidebarMenuItem
-          icon={<ChatBubbleOutline sx={{ fontSize: 20 }} />}
+          icon={SIDEBAR_ICONS.CHAT}
           label="Chat"
           isActive={isChatActive}
           onClick={() => navigate('/global-chat')}
         />
 
-        {/* Access Management / Requests */}
         <SidebarMenuItem
-          icon={<Assignment sx={{ fontSize: 20, color: location.pathname === '/access-requests' ? '#0E4DCA' : '#5F6368' }} />}
-          label="Requests"
-          isActive={location.pathname === '/access-requests'}
+          icon={SIDEBAR_ICONS.ACCESS_REQUESTS}
+          label={<>Access<br />Requests</>}
+          isActive={isAccessRequestsActive}
+          multiLine={true}
           onClick={() => navigate('/access-requests')}
         />
 
-        {/* Settings */}
-        <SidebarMenuItem
-          icon={<SettingsIcon sx={{ fontSize: 20, color: location.pathname === '/settings' ? '#0E4DCA' : '#5F6368' }} />}
-          label="Settings"
-          isActive={location.pathname === '/settings'}
-          onClick={() => navigate('/settings')}
-        />
+        {user?.isAdmin && (
+          <SidebarMenuItem
+            icon={SIDEBAR_ICONS.ADMIN}
+            label="Admin"
+            isActive={location.pathname.startsWith('/admin')}
+            onClick={() => navigate('/admin-access')}
+          />
+        )}
       </div>
 
-      {/* Browse Popover */}
-
+      {/* Dark Mode Toggle */}
+      {isDarkModeEnabled && (
+        <div className="sidebar-bottom-section">
+          <Tooltip title={mode === 'light' ? 'Dark mode' : 'Light mode'} placement="right">
+            <IconButton
+              onClick={() => dispatch(changeMode())}
+              aria-label="Toggle dark mode"
+              sx={{
+                color: mode === 'dark' ? '#c4c7c5' : '#444746',
+                width: 56,
+                height: 36,
+                borderRadius: '1000px',
+                '&:hover': {
+                  backgroundColor: mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.04)',
+                },
+              }}
+            >
+              {mode === 'light' ? (
+                <DarkMode sx={{ fontSize: 24 }} />
+              ) : (
+                <LightMode sx={{ fontSize: 24 }} />
+              )}
+            </IconButton>
+          </Tooltip>
+        </div>
+      )}
     </nav>
   );
 };

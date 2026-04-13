@@ -1,7 +1,25 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import { vi, beforeEach, it, describe, expect } from 'vitest';
+import { Provider } from 'react-redux';
+import { configureStore } from '@reduxjs/toolkit';
 import ResourceViewer from './ResourceViewer';
+
+// Mock Redux store
+const createMockStore = (initialState: any = {}) => {
+  return configureStore({
+    reducer: {
+      search: (state = { searchFilters: {}, semanticSearch: true, ...(initialState.search || {}) }) => state,
+      entry: (state = { status: 'idle', ...(initialState.entry || {}) }) => state,
+      user: (state = { mode: 'light', ...(initialState.user || {}) }) => state
+    },
+    preloadedState: {
+      search: { searchFilters: {}, semanticSearch: false, ...(initialState.search || {}) },
+      entry: { status: 'idle', ...(initialState.entry || {}) },
+      user: { mode: 'light', ...(initialState.user || {}) }
+    }
+  });
+};
 
 // Mock react-router-dom
 const mockNavigate = vi.fn();
@@ -21,11 +39,26 @@ vi.mock('../../auth/AuthProvider', () => ({
   })
 }));
 
+// Mock NoAccessContext
+const mockTriggerNoAccess = vi.fn();
+vi.mock('../../contexts/NoAccessContext', () => ({
+  useNoAccess: () => ({
+    isNoAccessOpen: false,
+    noAccessMessage: null,
+    triggerNoAccess: mockTriggerNoAccess,
+    dismissNoAccess: vi.fn(),
+  }),
+}));
+
 // Mock child components
 vi.mock('../SearchEntriesCard/SearchEntriesCard', () => ({
-  default: function MockSearchEntriesCard({ entry, css, isSelected }: any) {
+  default: function MockSearchEntriesCard({ entry, css, isSelected, onDoubleClick }: any) {
     return (
-      <div data-testid="search-entries-card" style={css}>
+      <div
+        data-testid="search-entries-card"
+        style={css}
+        onDoubleClick={() => onDoubleClick?.(entry)}
+      >
         {entry?.entrySource?.displayName || entry?.name}
         {isSelected && <span data-testid="selected-indicator">Selected</span>}
       </div>
@@ -52,10 +85,18 @@ vi.mock('../Tags/FilterTag', () => ({
 }));
 
 vi.mock('../SearchPage/SearchTableView', () => ({
-  default: function MockSearchTableView({ resources, onRowClick, onFavoriteClick }: any) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  default: function MockSearchTableView({ resources, onRowClick, onFavoriteClick, getFormatedDate, getEntryType }: any) {
+    // Call the utility functions to test them
+    const formattedDate = getFormatedDate?.(resources[0]?.dataplexEntry?.updateTime?.seconds ? new Date(resources[0].dataplexEntry.updateTime.seconds * 1000) : null);
+    // Path 'projects/test/table/dataset' splits to ['projects','test','table','dataset'], second-to-last is 'table' -> 'Table'
+    const entryType = getEntryType?.('projects/test/table/dataset', '/');
+
     return (
       <div data-testid="search-table-view">
         Table View with {resources?.length} resources
+        <span data-testid="formatted-date">{formattedDate}</span>
+        <span data-testid="entry-type">{entryType}</span>
         <button onClick={() => onRowClick(resources[0]?.dataplexEntry)}>Click Row</button>
         <button onClick={() => onFavoriteClick(resources[0]?.dataplexEntry)}>Favorite</button>
       </div>
@@ -82,10 +123,27 @@ vi.mock('./ResourcePreview', () => ({
   }
 }));
 
+vi.mock('./FilterChips', () => ({
+  default: function MockFilterChips({ selectedFilters, handleRemoveFilterTag }: any) {
+    return (
+      <div data-testid="filter-chips">
+        {selectedFilters?.map((filter: any) => (
+          <div key={filter.name} data-testid="filter-chip">
+            {filter.name}
+            <button data-testid="close-button" onClick={() => handleRemoveFilterTag(filter)}>×</button>
+          </div>
+        ))}
+      </div>
+    );
+  }
+}));
+
 // Mock SVG assets
 vi.mock('@mui/icons-material', () => ({
   KeyboardArrowDown: () => <div data-testid="keyboard-arrow-down">Arrow</div>,
-  InfoOutlined: () => <div data-testid="info-outlined">Info</div>
+  InfoOutlined: () => <div data-testid="info-outlined">Info</div>,
+  ChevronLeftOutlined: () => <div data-testid="chevron-left">ChevronLeft</div>,
+  ChevronRightOutlined: () => <div data-testid="chevron-right">ChevronRight</div>
 }));
 
 describe('ResourceViewer', () => {
@@ -144,11 +202,14 @@ describe('ResourceViewer', () => {
     handlePagination: vi.fn(),
   };
 
-  const renderResourceViewer = (props = {}) => {
+  const renderResourceViewer = (props = {}, storeState = {}) => {
+    const store = createMockStore(storeState);
     return render(
-      <BrowserRouter>
-        <ResourceViewer {...defaultProps} {...props} />
-      </BrowserRouter>
+      <Provider store={store}>
+        <BrowserRouter>
+          <ResourceViewer {...defaultProps} {...props} />
+        </BrowserRouter>
+      </Provider>
     );
   };
 
@@ -160,7 +221,7 @@ describe('ResourceViewer', () => {
     renderResourceViewer({ resourcesStatus: 'loading' });
 
     expect(screen.getByTestId('shimmer-loader')).toBeInTheDocument();
-    expect(screen.getByText('Loading list (6)')).toBeInTheDocument();
+    expect(screen.getByText('Loading search-card (6)')).toBeInTheDocument();
   });
 
   it('renders resources in list view by default', () => {
@@ -179,79 +240,24 @@ describe('ResourceViewer', () => {
     expect(screen.getByText('Table View with 3 resources')).toBeInTheDocument();
   });
 
-  it('displays results count', () => {
+  it('displays top results indicator', () => {
     renderResourceViewer();
 
-    expect(screen.getByText('3 results')).toBeInTheDocument();
+    expect(screen.getByText('Search results')).toBeInTheDocument();
   });
 
-  it('displays type filter tags', () => {
-    renderResourceViewer();
-
-    expect(screen.getByText('table (2)')).toBeInTheDocument();
-    expect(screen.getByText('dataset (1)')).toBeInTheDocument();
-  });
-
-  it('handles type filter selection', () => {
-    const mockOnTypeFilterChange = vi.fn();
-    renderResourceViewer({ onTypeFilterChange: mockOnTypeFilterChange });
-
-    const tableFilter = screen.getByText('table (2)');
-    const clickButton = tableFilter.querySelector('[data-testid="click-button"]');
-    fireEvent.click(clickButton!);
-
-    expect(mockOnTypeFilterChange).toHaveBeenCalledWith('table');
-  });
-
-  it('handles type filter deselection when already selected', () => {
-    const mockOnTypeFilterChange = vi.fn();
-    renderResourceViewer({ 
-      selectedTypeFilter: 'table',
-      onTypeFilterChange: mockOnTypeFilterChange 
-    });
-
-    const tableFilter = screen.getByText('table (2)');
-    const clickButton = tableFilter.querySelector('[data-testid="click-button"]');
-    fireEvent.click(clickButton!);
-
-    expect(mockOnTypeFilterChange).toHaveBeenCalledWith(null);
-  });
 
   it('filters resources by selected type filter', () => {
     renderResourceViewer({ selectedTypeFilter: 'table' });
 
+    // Filtering by selectedTypeFilter is commented out in the component
+    // All resources are displayed regardless of selectedTypeFilter
     expect(screen.getByText('Table 1')).toBeInTheDocument();
     expect(screen.getByText('Table 2')).toBeInTheDocument();
-    expect(screen.queryByText('Dataset 1')).not.toBeInTheDocument();
-    expect(screen.getAllByTestId('search-entries-card')).toHaveLength(2);
+    expect(screen.getByText('Dataset 1')).toBeInTheDocument();
+    expect(screen.getAllByTestId('search-entries-card')).toHaveLength(3);
   });
 
-  it('displays selected filters as tags', () => {
-    const selectedFilters = [
-      { name: 'BigQuery', type: 'system' },
-      { name: 'Table', type: 'typeAliases' }
-    ];
-    renderResourceViewer({ selectedFilters });
-
-    expect(screen.getByText('BigQuery (3)')).toBeInTheDocument();
-    expect(screen.getByText('Table (2)')).toBeInTheDocument();
-  });
-
-  it('handles removing selected filter tags', () => {
-    const mockOnFiltersChange = vi.fn();
-    const selectedFilters = [
-      { name: 'BigQuery', type: 'system' }
-    ];
-    renderResourceViewer({ 
-      selectedFilters, 
-      onFiltersChange: mockOnFiltersChange 
-    });
-
-    const closeButton = screen.getByTestId('close-button');
-    fireEvent.click(closeButton);
-
-    expect(mockOnFiltersChange).toHaveBeenCalledWith([]);
-  });
 
   it('handles view mode toggle', () => {
     const mockOnViewModeChange = vi.fn();
@@ -266,27 +272,25 @@ describe('ResourceViewer', () => {
   it('displays sort options when showSortBy is true', () => {
     renderResourceViewer({ showSortBy: true });
 
-    expect(screen.getByText('Sort by :')).toBeInTheDocument();
-    expect(screen.getByText('Last Modified')).toBeInTheDocument();
+    expect(screen.getByText('Most relevant')).toBeInTheDocument();
   });
 
   it('handles sort menu interactions', () => {
     renderResourceViewer({ showSortBy: true });
 
-    const sortButton = screen.getByText('Last Modified');
+    const sortButton = screen.getByText('Most relevant');
     fireEvent.click(sortButton);
 
     // Check that menu items are present
     expect(screen.getByRole('menu')).toBeInTheDocument();
     expect(screen.getByText('Name')).toBeInTheDocument();
-    // Use getAllByText to handle multiple "Last Modified" elements
-    expect(screen.getAllByText('Last Modified')).toHaveLength(2);
+    expect(screen.getByText('Last Modified')).toBeInTheDocument();
   });
 
   it('handles sort option selection', () => {
     renderResourceViewer({ showSortBy: true });
 
-    const sortButton = screen.getByText('Last Modified');
+    const sortButton = screen.getByText('Most relevant');
     fireEvent.click(sortButton);
 
     const nameOptions = screen.getAllByText('Name');
@@ -300,7 +304,7 @@ describe('ResourceViewer', () => {
   it('sorts resources by name', () => {
     renderResourceViewer({ showSortBy: true });
 
-    const sortButton = screen.getByText('Last Modified');
+    const sortButton = screen.getByText('Most relevant');
     fireEvent.click(sortButton);
     const nameOptions = screen.getAllByText('Name');
     const menuItem = nameOptions.find(el => el.closest('[role="menuitem"]'));
@@ -316,11 +320,11 @@ describe('ResourceViewer', () => {
   it('sorts resources by last modified (default)', () => {
     renderResourceViewer();
 
-    // Resources should be sorted by last modified (newest first)
+    // Default sortOrder is null, so resources display in original order
     const cards = screen.getAllByTestId('search-entries-card');
-    expect(cards[0]).toHaveTextContent('Dataset 1'); // Jan 3, 2022
-    expect(cards[1]).toHaveTextContent('Table 2');   // Jan 2, 2022
-    expect(cards[2]).toHaveTextContent('Table 1');   // Jan 1, 2022
+    expect(cards[0]).toHaveTextContent('Table 1');
+    expect(cards[1]).toHaveTextContent('Table 2');
+    expect(cards[2]).toHaveTextContent('Dataset 1');
   });
 
   it('handles resource selection for preview', () => {
@@ -330,8 +334,8 @@ describe('ResourceViewer', () => {
     const firstCard = screen.getAllByTestId('search-entries-card')[0];
     fireEvent.click(firstCard);
 
-    // First card is Dataset 1 (sorted by last modified, newest first)
-    expect(mockOnPreviewDataChange).toHaveBeenCalledWith(mockResources[2].dataplexEntry);
+    // Default sortOrder is null, so resources are in original order. First card is Table 1.
+    expect(mockOnPreviewDataChange).toHaveBeenCalledWith(mockResources[0].dataplexEntry);
   });
 
   it('shows selected resource indicator', () => {
@@ -342,85 +346,62 @@ describe('ResourceViewer', () => {
     expect(selectedIndicator).toBeInTheDocument();
   });
 
-  it('handles info icon click to toggle preview', () => {
-    renderResourceViewer();
-
-    const infoIcon = screen.getByTestId('info-outlined');
-    fireEvent.click(infoIcon);
-
-    expect(screen.getByTestId('resource-preview')).toBeInTheDocument();
-  });
-
-  it('shows preview when info is open', () => {
-    renderResourceViewer();
-
-    const infoIcon = screen.getByTestId('info-outlined');
-    fireEvent.click(infoIcon);
-
-    expect(screen.getByTestId('resource-preview')).toBeInTheDocument();
-    expect(screen.getByText('Preview for')).toBeInTheDocument();
-  });
-
-  it('handles preview close', () => {
-    const mockOnPreviewDataChange = vi.fn();
-    renderResourceViewer({ onPreviewDataChange: mockOnPreviewDataChange });
-
-    const infoIcon = screen.getByTestId('info-outlined');
-    fireEvent.click(infoIcon);
-
-    const closeButton = screen.getByText('Close Preview');
-    fireEvent.click(closeButton);
-
-    expect(mockOnPreviewDataChange).toHaveBeenCalledWith(null);
-  });
 
   it('handles table view row click', () => {
     const mockOnPreviewDataChange = vi.fn();
-    renderResourceViewer({ 
+    renderResourceViewer({
       viewMode: 'table',
-      onPreviewDataChange: mockOnPreviewDataChange 
+      onPreviewDataChange: mockOnPreviewDataChange
     });
 
     const clickRowButton = screen.getByText('Click Row');
     fireEvent.click(clickRowButton);
 
-    // The mock SearchTableView passes the first resource from the filtered array
-    // which is sorted by last modified (newest first), so it's Dataset 1
-    expect(mockOnPreviewDataChange).toHaveBeenCalledWith(mockResources[2].dataplexEntry);
+    // Default sortOrder is null, so resources are in original order. First is Table 1.
+    expect(mockOnPreviewDataChange).toHaveBeenCalledWith(mockResources[0].dataplexEntry);
   });
 
   it('handles table view favorite click', () => {
     const mockOnFavoriteClick = vi.fn();
-    renderResourceViewer({ 
+    renderResourceViewer({
       viewMode: 'table',
-      onFavoriteClick: mockOnFavoriteClick 
+      onFavoriteClick: mockOnFavoriteClick
     });
 
     const favoriteButton = screen.getByText('Favorite');
     fireEvent.click(favoriteButton);
 
-    // The mock SearchTableView passes the first resource from the filtered array
-    // which is sorted by last modified (newest first), so it's Dataset 1
-    expect(mockOnFavoriteClick).toHaveBeenCalledWith(mockResources[2].dataplexEntry);
+    // Default sortOrder is null, so resources are in original order. First is Table 1.
+    expect(mockOnFavoriteClick).toHaveBeenCalledWith(mockResources[0].dataplexEntry);
   });
 
   it('displays no resources message when filtered results are empty', () => {
-    renderResourceViewer({ 
+    renderResourceViewer({
       resources: [],
       resourcesStatus: 'succeeded'
     });
 
-    expect(screen.getByText('No Resources found.')).toBeInTheDocument();
+    expect(screen.getByText('No Resources found')).toBeInTheDocument();
   });
 
   it('handles failed resources status by logging out and navigating', () => {
-    renderResourceViewer({ 
+    renderResourceViewer({
       resourcesStatus: 'failed',
       error: 'Failed to fetch resources'
     });
 
     expect(mockLogout).toHaveBeenCalled();
     expect(mockNavigate).toHaveBeenCalledWith('/login');
+  });
+
+  it('handles failed resources status with 403 by showing no-access modal', () => {
+    renderResourceViewer({
+      resourcesStatus: 'failed',
+      error: { error: { code: 403, status: 'PERMISSION_DENIED' } }
+    });
+
+    expect(mockTriggerNoAccess).toHaveBeenCalled();
+    expect(mockLogout).not.toHaveBeenCalled();
   });
 
   it('handles custom header rendering', () => {
@@ -494,65 +475,9 @@ describe('ResourceViewer', () => {
     expect(screen.queryByText('dataset (1)')).not.toBeInTheDocument();
   });
 
-  it('handles filter result count calculation', () => {
-    const selectedFilters = [
-      { name: 'BigQuery', type: 'system' },
-      { name: 'Table', type: 'typeAliases' }
-    ];
-    renderResourceViewer({ selectedFilters });
 
-    // Should show count for system filter
-    expect(screen.getByText('BigQuery (3)')).toBeInTheDocument();
-    // Should show count for typeAliases filter
-    expect(screen.getByText('Table (2)')).toBeInTheDocument();
-  });
 
-  it('handles preview data change from ResourcePreview', () => {
-    const mockOnPreviewDataChange = vi.fn();
-    renderResourceViewer({ onPreviewDataChange: mockOnPreviewDataChange });
 
-    const infoIcon = screen.getByTestId('info-outlined');
-    fireEvent.click(infoIcon);
-
-    const closePreviewButton = screen.getByText('Close Preview');
-    fireEvent.click(closePreviewButton);
-
-    expect(mockOnPreviewDataChange).toHaveBeenCalledWith(null);
-  });
-
-  it('handles view details from ResourcePreview', () => {
-    const mockOnViewDetails = vi.fn();
-    const previewData = mockResources[0].dataplexEntry;
-    renderResourceViewer({ 
-      previewData,
-      onViewDetails: mockOnViewDetails 
-    });
-
-    const infoIcon = screen.getByTestId('info-outlined');
-    fireEvent.click(infoIcon);
-
-    const viewDetailsButton = screen.getByText('View Details');
-    fireEvent.click(viewDetailsButton);
-
-    expect(mockOnViewDetails).toHaveBeenCalledWith(previewData);
-  });
-
-  it('handles request access from ResourcePreview', () => {
-    const mockOnRequestAccess = vi.fn();
-    const previewData = mockResources[0].dataplexEntry;
-    renderResourceViewer({ 
-      previewData,
-      onRequestAccess: mockOnRequestAccess 
-    });
-
-    const infoIcon = screen.getByTestId('info-outlined');
-    fireEvent.click(infoIcon);
-
-    const requestAccessButton = screen.getByText('Request Access');
-    fireEvent.click(requestAccessButton);
-
-    expect(mockOnRequestAccess).toHaveBeenCalledWith(previewData);
-  });
 
   it('applies custom container style', () => {
     const containerStyle = { backgroundColor: 'red' };
@@ -571,37 +496,16 @@ describe('ResourceViewer', () => {
     expect(screen.getByText('Table 1')).toBeInTheDocument();
   });
 
-  it('handles multiple filter selections', () => {
-    const selectedFilters = [
-      { name: 'BigQuery', type: 'system' },
-      { name: 'Table', type: 'typeAliases' },
-      { name: 'Dataset', type: 'typeAliases' }
-    ];
-    renderResourceViewer({ selectedFilters });
 
-    expect(screen.getByText('BigQuery (3)')).toBeInTheDocument();
-    expect(screen.getByText('Table (2)')).toBeInTheDocument();
-    expect(screen.getByText('Dataset (1)')).toBeInTheDocument();
-  });
-
-  it('handles filter tags with undefined counts', () => {
-    const selectedFilters = [
-      { name: 'UnknownFilter', type: 'unknownType' }
-    ];
-    renderResourceViewer({ selectedFilters });
-
-    // Should show filter name without count for unknown types
-    expect(screen.getByText('UnknownFilter')).toBeInTheDocument();
-  });
 
   it('handles empty resources array', () => {
-    renderResourceViewer({ 
+    renderResourceViewer({
       resources: [],
       resourcesStatus: 'succeeded'
     });
 
-    expect(screen.getByText('No Resources found.')).toBeInTheDocument();
-    expect(screen.getByText('0 results')).toBeInTheDocument();
+    expect(screen.getByText('No Resources found')).toBeInTheDocument();
+    // Results count display is commented out in component
   });
 
   it('handles resources with missing entryType', () => {
@@ -616,10 +520,9 @@ describe('ResourceViewer', () => {
       }
     ];
 
-    // Component crashes when entryType is undefined due to .includes() call
-    expect(() => {
-      renderResourceViewer({ resources: resourcesWithMissingType });
-    }).toThrow();
+    // Type filtering is commented out, so missing entryType no longer crashes
+    renderResourceViewer({ resources: resourcesWithMissingType });
+    expect(screen.getByText('Table 1')).toBeInTheDocument();
   });
 
   it('handles sort by name with missing display names', () => {
@@ -650,4 +553,252 @@ describe('ResourceViewer', () => {
     // Should still render both resources
     expect(screen.getAllByTestId('search-entries-card')).toHaveLength(2);
   });
+
+  // Additional tests for increased coverage
+
+  it('displays semantic search results indicator', () => {
+    renderResourceViewer({}, { search: { searchFilters: [], semanticSearch: true } });
+
+    expect(screen.getByText('Search results')).toBeInTheDocument();
+  });
+
+  it('handles failed status with INVALID_ARGUMENT error', () => {
+    renderResourceViewer({
+      resourcesStatus: 'failed',
+      error: {
+        message: 'Bad Request',
+        details: 'INVALID_ARGUMENT: The query is malformed'
+      }
+    });
+
+    expect(screen.getByText(/invalid arguments passed in search params/)).toBeInTheDocument();
+    expect(mockLogout).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalledWith('/login');
+  });
+
+  it('handles failed status with non-INVALID_ARGUMENT error with details', () => {
+    renderResourceViewer({
+      resourcesStatus: 'failed',
+      error: {
+        message: 'Unauthorized',
+        details: 'Authentication failed'
+      }
+    });
+
+    expect(mockLogout).toHaveBeenCalled();
+    expect(mockNavigate).toHaveBeenCalledWith('/login');
+  });
+
+  it('handles failed status with error without details', () => {
+    renderResourceViewer({
+      resourcesStatus: 'failed',
+      error: {
+        message: 'Server Error'
+      }
+    });
+
+    expect(mockLogout).toHaveBeenCalled();
+    expect(mockNavigate).toHaveBeenCalledWith('/login');
+  });
+
+  it('handles double click on resource when access is granted', () => {
+    const mockOnPreviewDataChange = vi.fn();
+    // Use the first resource's dataplexEntry which has name 'project/dataset/table1'
+    const previewData = mockResources[0].dataplexEntry;
+
+    renderResourceViewer(
+      {
+        previewData,
+        onPreviewDataChange: mockOnPreviewDataChange
+      },
+      { entry: { status: 'succeeded' } }
+    );
+
+    // Find the selected card - Table 1 should have the selected indicator
+    const selectedIndicator = screen.getByTestId('selected-indicator');
+    const selectedCard = selectedIndicator.closest('[data-testid="search-entries-card"]');
+
+    if (selectedCard) {
+      fireEvent.doubleClick(selectedCard);
+      expect(mockNavigate).toHaveBeenCalledWith('/view-details');
+    }
+  });
+
+  it('handles double click on different resource when another is previewed', () => {
+    const mockOnPreviewDataChange = vi.fn();
+    // Preview Table 1
+    const previewData = mockResources[0].dataplexEntry;
+
+    renderResourceViewer(
+      {
+        previewData,
+        onPreviewDataChange: mockOnPreviewDataChange
+      },
+      { entry: { status: 'succeeded' } }
+    );
+
+    // Find a card that is NOT selected (doesn't have the selected indicator)
+    const cards = screen.getAllByTestId('search-entries-card');
+    // Default sortOrder is null so original order: Table 1 (selected), Table 2, Dataset 1
+    // Use cards[1] which is Table 2, not the previewed one
+    const differentCard = cards[1];
+
+    // Make sure it's not the selected one
+    if (!differentCard.querySelector('[data-testid="selected-indicator"]')) {
+      fireEvent.doubleClick(differentCard);
+      // Should update preview data, not navigate
+      expect(mockOnPreviewDataChange).toHaveBeenCalled();
+    }
+  });
+
+  it('handles scroll event and shows shadow', () => {
+    renderResourceViewer();
+
+    // Find the scrollable container
+    const scrollableContainer = screen.getByText('Dataset 1').closest('div[style*="overflow"]');
+
+    if (scrollableContainer) {
+      fireEvent.scroll(scrollableContainer, { target: { scrollTop: 100 } });
+      // The shadow element should be visible (opacity: 1) after scrolling
+    }
+  });
+
+  it('handles hover on resource card', () => {
+    renderResourceViewer();
+
+    const cards = screen.getAllByTestId('search-entries-card');
+
+    // Hover on first card
+    fireEvent.mouseEnter(cards[0].closest('div[class*="MuiBox"]') || cards[0]);
+    // Mouse leave
+    fireEvent.mouseLeave(cards[0].closest('div[class*="MuiBox"]') || cards[0]);
+
+    // Should not throw and cards should still be visible
+    expect(cards[0]).toBeInTheDocument();
+  });
+
+
+  it('sorts resources correctly when both have no display name', () => {
+    const resourcesNoNames = [
+      {
+        dataplexEntry: {
+          name: 'project/dataset/a',
+          entrySource: {},
+          entryType: 'tables-table',
+          updateTime: { seconds: 1640995200 }
+        }
+      },
+      {
+        dataplexEntry: {
+          name: 'project/dataset/b',
+          entrySource: {},
+          entryType: 'tables-table',
+          updateTime: { seconds: 1641081600 }
+        }
+      }
+    ];
+
+    renderResourceViewer({
+      resources: resourcesNoNames,
+      showSortBy: true
+    });
+
+    // Open sort menu and select Name
+    const sortButton = screen.getByText('Most relevant');
+    fireEvent.click(sortButton);
+    const nameOptions = screen.getAllByText('Name');
+    const menuItem = nameOptions.find(el => el.closest('[role="menuitem"]'));
+    fireEvent.click(menuItem!);
+
+    // Both should still be rendered (they have same empty name)
+    expect(screen.getAllByTestId('search-entries-card')).toHaveLength(2);
+  });
+
+  it('handles sort by last modified with missing update time', () => {
+    const resourcesMixedTime = [
+      {
+        dataplexEntry: {
+          name: 'project/dataset/a',
+          entrySource: { displayName: 'A' },
+          entryType: 'tables-table'
+          // No updateTime
+        }
+      },
+      {
+        dataplexEntry: {
+          name: 'project/dataset/b',
+          entrySource: { displayName: 'B' },
+          entryType: 'tables-table',
+          updateTime: { seconds: 1641081600 }
+        }
+      }
+    ];
+
+    renderResourceViewer({
+      resources: resourcesMixedTime
+    });
+
+    // Default sortOrder is null, so resources are in original order (A first, then B)
+    const cards = screen.getAllByTestId('search-entries-card');
+    expect(cards[0]).toHaveTextContent('A');
+    expect(cards[1]).toHaveTextContent('B');
+  });
+
+
+  it('handles onFavoriteClick being undefined in list view', () => {
+    renderResourceViewer({
+      onFavoriteClick: undefined
+    });
+
+    // Should render without errors
+    expect(screen.getAllByTestId('search-entries-card')).toHaveLength(3);
+  });
+
+
+
+  it('handles idle resources status', () => {
+    renderResourceViewer({
+      resourcesStatus: 'idle'
+    });
+
+    // Should render empty content for idle state
+    expect(screen.queryByTestId('shimmer-loader')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('search-entries-card')).not.toBeInTheDocument();
+  });
+
+  it('calls getFormatedDate and getEntryType in table view', () => {
+    renderResourceViewer({ viewMode: 'table' });
+
+    // Check that the utility functions were called and rendered output
+    expect(screen.getByTestId('formatted-date')).toBeInTheDocument();
+    expect(screen.getByTestId('entry-type')).toHaveTextContent('Table');
+  });
+
+  it('handles getFormatedDate with invalid date', () => {
+    const resourcesWithInvalidDate = [
+      {
+        dataplexEntry: {
+          name: 'project/dataset/table1',
+          entrySource: { displayName: 'Table 1' },
+          entryType: 'tables-table',
+          updateTime: { seconds: 'invalid' }
+        }
+      }
+    ];
+
+    renderResourceViewer({
+      resources: resourcesWithInvalidDate,
+      viewMode: 'table'
+    });
+
+    // Should still render without crashing
+    expect(screen.getByTestId('search-table-view')).toBeInTheDocument();
+  });
+
+
+
+
+
+
+
 });

@@ -18,6 +18,8 @@ import axios, { AxiosError } from 'axios';
 import LineageChartViewNew from './LineageChartViewNew.tsx';
 import { OpenInFull } from '@mui/icons-material';
 import useFullScreenStatus from '../../hooks/useFullScreenStatus';
+import { useNoAccess } from '../../contexts/NoAccessContext';
+import { useNotification } from '../../contexts/NotificationContext.tsx';
 
 /**
  * @file index.tsx
@@ -64,6 +66,7 @@ const Lineage: React.FC<LineageProps> = ({entry}) => {
   const { user } = useAuth();
   const id_token = user?.token || '';
   const dispatch = useDispatch<AppDispatch>();
+  const { showError } = useNotification();
 
   const { elementRef, isFullscreen, toggleFullscreen } = useFullScreenStatus();
 
@@ -88,10 +91,12 @@ const Lineage: React.FC<LineageProps> = ({entry}) => {
 
   const lineageEntry = useSelector((state: any) => state.entry.lineageEntryItems);
   const lineageEntryStatus = useSelector((state: any) => state.entry.lineageEntrystatus);
+  const lineageEntryError = useSelector((state: any) => state.entry.lineageEntryError);
   //const error = useSelector((state: any) => state.lineage.error);
+  const { triggerNoAccess } = useNoAccess();
 
   useEffect(() => {
-    dispatch(fetchLineageSearchLinks({parent : entry.name.split('/').slice(0,4).join("/"), fqn:entry.fullyQualifiedName, id_token: id_token}));   
+    dispatch(fetchLineageSearchLinks({parent : entry.name.split('/').slice(0,4).join("/"), fqn:entry.fullyQualifiedName, id_token: id_token}));
   }, []);
 
   useEffect(() => {
@@ -104,7 +109,11 @@ const Lineage: React.FC<LineageProps> = ({entry}) => {
     }else if(lineageEntryStatus === 'failed') {
       setSidePanelData(null);
       setSidePanelDataStatus('failed');
-    }   
+      // Show no-access modal for permission denied errors
+      if (lineageEntryError?.type === 'PERMISSION_DENIED') {
+        triggerNoAccess({ message: lineageEntryError.message });
+      }
+    }
   }, [lineageEntry, lineageEntryStatus]);
 
   useEffect(() => {
@@ -324,7 +333,7 @@ const Lineage: React.FC<LineageProps> = ({entry}) => {
       }catch(error){
         console.log(error);
         setQueryPanelDataStatus('failed');
-        throw new Error('Failed to submit access request');
+        showError('Failed to submit access request', 2000);
       }
     }
     else{
@@ -778,10 +787,9 @@ const Lineage: React.FC<LineageProps> = ({entry}) => {
 
   return (
     <Box>
-    <Box sx={{ 
-      height: 'calc(100vh - 200px)', 
-      display: 'flex', 
-      marginTop: '1.25rem', 
+    <Box sx={{
+      height: 'calc(100vh - 200px)',
+      display: 'flex',
       gap: '0.625rem',
       minWidth: 0, // Allow shrinking below content size
       width: '100%',

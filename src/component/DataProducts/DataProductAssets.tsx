@@ -1,10 +1,12 @@
 import React, { useState, useMemo } from "react";
-import { Box, Typography, InputBase, Tooltip } from "@mui/material";
-import { Tune } from "@mui/icons-material";
+import { Box, Typography } from "@mui/material";
+import { Close, Tune } from "@mui/icons-material";
 import ResourceViewer from "../Common/ResourceViewer";
 import FilterDropdown from "../Filter/FilterDropDown";
 import { typeAliases } from "../../utils/resourceUtils";
-import { GridFilterListIcon } from "@mui/x-data-grid";
+import FilterBar, { FilterBarChips } from '../Common/FilterBar';
+import type { ActiveFilter as FilterBarActiveFilter } from '../Common/FilterBar';
+
 
 interface DataProductAssetsProps {
   linkedAssets: any[];
@@ -21,28 +23,48 @@ const DataProductAssets: React.FC<DataProductAssetsProps> = ({
   idToken,
   onAssetPreviewChange,
 }) => {
-  const [isFilterOpen, setIsFilterOpen] = useState(true);
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [activeFilters, setActiveFilters] = useState<any[]>([]);
-  const [assetViewMode, setAssetViewMode] = useState<"list" | "table">("list");
+  const [filterBarActiveFilters, setFilterBarActiveFilters] = useState<FilterBarActiveFilter[]>([]);
+  const [assetViewMode, setAssetViewMode] = useState<"list" | "table">("table");
   const [assetPageSize, setAssetPageSize] = useState(20);
   const [assetPreviewData, setAssetPreviewData] = useState<any | null>(null);
 
   const filteredLinkedAssets = useMemo(() => {
     let assets = linkedAssets || [];
 
-    //if(searchTerm.length !== 0){
-        if (searchTerm.trim()) {
-        const lowerTerm = searchTerm.toLowerCase();
-        assets = assets.filter((asset: any) => {
-            const name = asset.dataplexEntry?.entrySource?.displayName || "";
-            const description = asset.dataplexEntry?.entrySource?.description || "";
-            return (
-            name.toLowerCase().includes(lowerTerm) ||
-            description.toLowerCase().includes(lowerTerm)
-            );
+    // Apply FilterBar active filters
+    if (filterBarActiveFilters.length > 0) {
+      assets = assets.filter((asset: any) => {
+        const name = asset.dataplexEntry?.entrySource?.displayName || "";
+        const description = asset.dataplexEntry?.entrySource?.description || "";
+
+        const filterGroups: FilterBarActiveFilter[][] = [];
+        let currentGroup: FilterBarActiveFilter[] = [];
+        filterBarActiveFilters.forEach((filter) => {
+          if (filter.isOr && currentGroup.length > 0) {
+            filterGroups.push(currentGroup);
+            currentGroup = [filter];
+          } else {
+            currentGroup.push(filter);
+          }
         });
-        }
-    //}
+        if (currentGroup.length > 0) filterGroups.push(currentGroup);
+
+        return filterGroups.some(group =>
+          group.every(filter =>
+            filter.values.some(value => {
+              const lower = value.toLowerCase();
+              switch (filter.property) {
+                case 'Name': return name.toLowerCase().includes(lower);
+                case 'Description': return description.toLowerCase().includes(lower);
+                default: return name.toLowerCase().includes(lower) || description.toLowerCase().includes(lower);
+              }
+            })
+          )
+        );
+      });
+    }
 
     if (activeFilters.length > 0) {
       const systemFilters = activeFilters.filter(
@@ -63,9 +85,11 @@ const DataProductAssets: React.FC<DataProductAssetsProps> = ({
         if (systemFilters.length > 0) {
           const system =
             asset.dataplexEntry?.entrySource?.system?.toLowerCase() || "";
+          const PRODUCT_API_NAMES: Record<string, string> = { "Knowledge Catalog": "Dataplex Universal Catalog" };
           const match = systemFilters.some((filter: any) => {
             if (filter.name === "Others") return true;
-            return system === filter.name.toLowerCase();
+            const apiName = PRODUCT_API_NAMES[filter.name] || filter.name;
+            return system === apiName.toLowerCase();
           });
           if (!match) return false;
         }
@@ -115,7 +139,15 @@ const DataProductAssets: React.FC<DataProductAssetsProps> = ({
     }
 
     return assets;
-  }, [linkedAssets, searchTerm, activeFilters]);
+  }, [linkedAssets, filterBarActiveFilters, activeFilters]);
+
+  const handleRemoveChip = (filter: FilterBarActiveFilter) => {
+    if (filter.id) {
+      setFilterBarActiveFilters(prev => prev.filter(f => f.id !== filter.id));
+    } else {
+      setFilterBarActiveFilters(prev => prev.filter(f => f.property !== filter.property || f.id));
+    }
+  };
 
   const handlePreviewDataChange = (data: any | null) => {
     setAssetPreviewData(data);
@@ -150,14 +182,51 @@ const DataProductAssets: React.FC<DataProductAssetsProps> = ({
           height: "100%",
           width: "100%",
           borderRadius: "16px",
-          overflow: "hidden",
+          overflow: "visible",
           bgcolor: "#fff",
           display: "flex",
           flexDirection: "row",
-          gap: "16px",
+          gap: "8px",
         }}
       >
-        {/* LEFT SECTION: Search + List */}
+        {/* LEFT SECTION: Filter Card (Collapsible) */}
+        <Box
+          sx={{
+            width: isFilterOpen ? "clamp(230px, 18vw, 280px)" : "0px",
+            minWidth: isFilterOpen ? "clamp(230px, 18vw, 280px)" : "0px",
+            transition:
+              "width 0.3s ease, min-width 0.3s ease, padding 0.3s ease, opacity 0.3s ease",
+            opacity: isFilterOpen ? 1 : 0,
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "flex-start",
+            padding: isFilterOpen ? "20px" : "0px",
+            marginTop: "8px",
+            gap: "20px",
+            backgroundColor: "#F8FAFD",
+            border: isFilterOpen ? "1px solid #DADCE0" : "none",
+            borderRadius: "20px",
+            height: "100%",
+            boxSizing: "border-box",
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              height: "100%",
+              overflowY: "auto",
+            }}
+          >
+            <FilterDropdown
+              filters={activeFilters}
+              onFilterChange={(newFilters) => setActiveFilters(newFilters)}
+              isGlossary={true}
+            />
+          </div>
+        </Box>
+
+        {/* RIGHT SECTION: Search + List */}
         <Box
           sx={{
             flex: 1,
@@ -166,73 +235,6 @@ const DataProductAssets: React.FC<DataProductAssetsProps> = ({
             minWidth: 0,
           }}
         >
-          {/* Toolbar: Search + Tune Icon */}
-          <Box
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              mb: 2,
-              pt: 1,
-            }}
-          >
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                backgroundColor: "#fff",
-                border: "1px solid #DADCE0",
-                borderRadius: "54px",
-                px: 1.5,
-                py: 0.5,
-                height: "32px",
-                width: "309px",
-                boxSizing: "border-box",
-              }}
-            >
-              <GridFilterListIcon style={{ color: "#575757", marginRight: 10, fontSize: 16 }} />
-              <InputBase
-                placeholder="Filter assets by name or description"
-                value={searchTerm}
-                onChange={(e) => onSearchTermChange(e.target.value)}
-                sx={{
-                  fontFamily: "Google Sans Text",
-                  fontSize: "12px",
-                  fontWeight: 500,
-                  color: "#5E5E5E",
-                  width: "100%",
-                  "& ::placeholder": {
-                    opacity: 1,
-                    color: "#5E5E5E",
-                  },
-                }}
-              />
-            </Box>
-
-            {/* Tune Icon - Toggles Filter */}
-            <Tooltip title="Toggle Filters">
-              <Box
-                onClick={() => setIsFilterOpen(!isFilterOpen)}
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: "40px",
-                  height: "32px",
-                  borderRadius: "59px",
-                  cursor: "pointer",
-                  border: isFilterOpen ? "none" : "1px solid #DADCE0",
-                  backgroundColor: isFilterOpen ? "#E7F0FE" : "transparent",
-                  color: isFilterOpen ? "#0E4DCA" : "#575757",
-                  transition: "all 0.2s ease",
-                  mr: 2.5,
-                }}
-              >
-                <Tune sx={{ fontSize: 20 }} />
-              </Box>
-            </Tooltip>
-          </Box>
-
           {/* Resource Viewer Content */}
           <Box sx={{ flex: 1, minHeight: 0 }}>
             <ResourceViewer
@@ -251,9 +253,79 @@ const DataProductAssets: React.FC<DataProductAssetsProps> = ({
               setPageSize={setAssetPageSize}
               requestItemStore={filteredLinkedAssets}
               handlePagination={() => {}}
-              showFilters={false}
-              showSortBy={false}
-              showResultsCount={true}
+              showFilters={true}
+              showSortBy={true}
+              showResultsCount={false}
+              hideMostRelevant={true}
+              headerStyle={{ paddingTop: '2px' }}
+              customFilters={
+                <div style={{ display: "flex", alignItems: "flex-start", gap: "20px", minWidth: 0, flex: 1 }}>
+                  <span
+                    style={{
+                      boxSizing: "border-box",
+                      display: "flex",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      padding: "8px 13px",
+                      gap: "8px",
+                      width: "85px",
+                      height: "32px",
+                      border: isFilterOpen ? "none" : "1px solid #0E4DCA",
+                      borderRadius: "59px",
+                      background: isFilterOpen ? "#0E4DCA" : "none",
+                      color: isFilterOpen ? "#EDF2FC" : "#0E4DCA",
+                      cursor: "pointer",
+                      transition: "all 0.2s ease",
+                      flexShrink: 0,
+                      flexGrow: 0,
+                    }}
+                    onClick={() => {
+                      const newFilterState = !isFilterOpen;
+                      setIsFilterOpen(newFilterState);
+                      if (newFilterState) {
+                        setAssetPreviewData(null);
+                        onAssetPreviewChange(null);
+                      }
+                    }}
+                  >
+                    {isFilterOpen ? <Close style={{ width: "16px", height: "16px", flexShrink: 0, flexGrow: 0 }} /> : <Tune style={{ width: "16px", height: "16px", flexShrink: 0, flexGrow: 0 }} />}
+                    <span style={{
+                      fontFamily: '"Google Sans", sans-serif',
+                      fontWeight: 500,
+                      fontSize: "12px",
+                      lineHeight: "16px",
+                      letterSpacing: "0.1px",
+                      display: "flex",
+                      alignItems: "center",
+                      whiteSpace: "nowrap",
+                      flexShrink: 0,
+                      flexGrow: 0,
+                    }}>Filters</span>
+                  </span>
+                  <FilterBar
+                    filterText={searchTerm}
+                    onFilterTextChange={onSearchTermChange}
+                    propertyNames={[
+                      { name: 'Name', mode: 'text' as const },
+                      { name: 'Description', mode: 'text' as const },
+                    ]}
+                    activeFilters={filterBarActiveFilters}
+                    onActiveFiltersChange={setFilterBarActiveFilters}
+                    marginLeft="0px"
+                    placeholder="Filter assets by name or description"
+                    sx={{ flex: 1, minWidth: 0 }}
+                    hideChips
+                    showTextInFilterMenu
+                  />
+                </div>
+              }
+              customFilterChips={
+                <FilterBarChips
+                  activeFilters={filterBarActiveFilters}
+                  onRemoveFilter={handleRemoveChip}
+                  onRemoveOrConnector={(filter) => setFilterBarActiveFilters(prev => prev.map(f => f.id === filter.id ? { ...f, isOr: false } : f))}
+                />
+              }
               containerStyle={{
                 height: "100%",
                 border: "none",
@@ -264,45 +336,11 @@ const DataProductAssets: React.FC<DataProductAssetsProps> = ({
               contentStyle={{
                 minHeight: "auto",
                 maxHeight: "100%",
+                margin: 0,
+                padding: 0,
               }}
             />
           </Box>
-        </Box>
-
-        {/* RIGHT SECTION: Filter Card (Collapsible) */}
-        <Box
-          sx={{
-            width: isFilterOpen ? "clamp(230px, 18vw, 280px)" : "0px",
-            minWidth: isFilterOpen ? "clamp(230px, 18vw, 280px)" : "0px",
-            transition:
-              "width 0.3s ease, min-width 0.3s ease, padding 0.3s ease, opacity 0.3s ease",
-            opacity: isFilterOpen ? 1 : 0,
-            overflow: "hidden",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "flex-start",
-            padding: isFilterOpen ? "20px" : "0px",
-            gap: "20px",
-            backgroundColor: "#FFFFFF",
-            border: isFilterOpen ? "1px solid #DADCE0" : "none",
-            borderRadius: "16px",
-            height: "100%",
-            boxSizing: "border-box",
-          }}
-        >
-          <div
-            style={{
-              width: "100%",
-              height: "100%",
-              overflowY: "auto",
-            }}
-          >
-            <FilterDropdown
-              filters={activeFilters}
-              onFilterChange={(newFilters) => setActiveFilters(newFilters)}
-              isGlossary={true}
-            />
-          </div>
         </Box>
       </Box>
     </Box>

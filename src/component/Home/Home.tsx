@@ -2,7 +2,7 @@ import './Home.css'
 import SearchBar from '../SearchBar/SearchBar'
 import { CircularProgress, Grid } from '@mui/material'
 import { useNavigate } from 'react-router-dom'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../../auth/AuthProvider'
 import axios from 'axios'
 import { URLS } from '../../constants/urls'
@@ -10,6 +10,9 @@ import { useDispatch, useSelector } from 'react-redux'
 import type { AppDispatch } from '../../app/store'
 import { useNotification } from '../../contexts/NotificationContext'
 import { getProjects } from '../../features/projects/projectsSlice'
+import { sanitizeFirstName } from '../../utils/sanitizeName'
+import { useNoAccess } from '../../contexts/NoAccessContext'
+import { REQUIRED_IAM_ROLE } from '../../constants/auth'
 
 /**
  * @file Home.tsx
@@ -38,125 +41,147 @@ import { getProjects } from '../../features/projects/projectsSlice'
  */
 
 const Home = () => {
-  // const { displayName, email, phoneNumber, photoURL } = user
   const { user, logout, updateUser } = useAuth();
-  const { showSuccess, showError } = useNotification();
+  const { showError } = useNotification();
+  const { triggerNoAccess } = useNoAccess();
   const navigate = useNavigate();
   const [loader, setLoader] = useState(true);
   const dispatch = useDispatch<AppDispatch>();
-
   const projectsLoaded = useSelector((state: any) => state.projects.isloaded);
-  //const searchTerm = useSelector((state:any) => state.search.term);
+  const accessCheckedRef = useRef(false);
+
+  // Check OAuth scopes (set at login) and IAM role after login
+  useEffect(() => {
+    if (!user?.token || !user?.email || accessCheckedRef.current) return;
+    accessCheckedRef.current = true;
+
+    // 1. Check if login flagged missing OAuth scopes
+    const scopeCheckFailed = localStorage.getItem('scopeCheckFailed');
+    if (scopeCheckFailed) {
+      const missingScopes = JSON.parse(scopeCheckFailed);
+      localStorage.removeItem('scopeCheckFailed');
+      triggerNoAccess({
+        message: `Your Google account did not grant the required permissions: ${missingScopes.map((s: string) => s.split('/').pop()).join(', ')}. Please sign in again and grant all requested permissions.`,
+      });
+      return;
+    }
+
+    // 2. Check IAM role via backend endpoint
+    axios.post(URLS.API_URL + URLS.CHECK_IAM_ROLE, {
+      email: user.email,
+      role: REQUIRED_IAM_ROLE,
+    }).then((res) => {
+      if (!res.data.hasRole) {
+        triggerNoAccess({
+          message: `Your account (${user.email}) does not have the required '${REQUIRED_IAM_ROLE}' role on this project. Please contact your administrator to get the appropriate permissions.`,
+        });
+      }
+    }).catch((err) => {
+      console.error('[Home] IAM role check failed:', err);
+      // If the check itself fails with 403, the user likely lacks cloud-platform scope
+      if (err.response?.status === 403) {
+        triggerNoAccess({
+          message: 'Unable to verify your permissions. You may not have sufficient access to this project. Please contact your administrator.',
+        });
+      }
+    });
+  }, [user?.token, user?.email, triggerNoAccess]);
 
   useEffect(() => {
     setLoader(true);
-    if (!projectsLoaded) {
+    if(!projectsLoaded) {
       dispatch(getProjects({ id_token: user?.token }));
     }
     dispatch({ type: 'resources/setItemsPreviousPageRequest', payload: null });
     dispatch({ type: 'resources/setItemsPageRequest', payload: null });
     dispatch({ type: 'resources/setItemsStoreData', payload: [] });
     dispatch({ type: 'resources/setItems', payload: [] });
-    if (Object.keys(user?.appConfig).length === 0) {
-      axios.get(URLS.API_URL + URLS.APP_CONFIG)
-        .then((res) => {
-          const appConfig: any = res.data;
+      if(Object.keys(user?.appConfig).length === 0){
+        axios.get(URLS.API_URL + URLS.APP_CONFIG)
+        .then(async (res)=>{
+          const appConfig:any = res.data;
+          // Check admin status so user.isAdmin is available throughout the app
+          let isAdmin = user?.isAdmin || false;
+          try {
+            const adminRes = await axios.get(URLS.API_URL + URLS.ADMIN_CHECK, {
+              params: { email: user?.email },
+              headers: { Authorization: `Bearer ${user?.token}`, 'x-user-email': user?.email || '' }
+            });
+            isAdmin = adminRes.data?.isAdmin || adminRes.data?.hasAdminCapabilities || false;
+          } catch (_) { /* non-critical — keep isAdmin false */ }
+
           let userData = {
             name: user?.name,
             email: user?.email,
             picture: user?.picture,
             token: user?.token,
-            hasRole: true,
-            role: 'user',
-            isAdmin: user?.email === import.meta.env.VITE_ADMIN_EMAIL,
-            roles: [],
-            permissions: [],
-            appConfig: appConfig
+            tokenExpiry: user?.tokenExpiry,
+            tokenIssuedAt: user?.tokenIssuedAt,
+            hasRole: user?.hasRole,
+            roles: user?.roles || [],
+            permissions: user?.permissions || [],
+            iamDisplayRole: user?.iamDisplayRole,
+            appConfig: appConfig,
+            isAdmin: isAdmin,
           };
           updateUser(user?.token, userData);
           setLoader(false);
-          const welcomeShown = sessionStorage.getItem('welcomeShown');
-          if (!welcomeShown) {
-            showSuccess("Welcome " + user?.name + "!", 2000);
-            sessionStorage.setItem('welcomeShown', 'true');
-          }
-        }).catch((err) => {
+        }).catch((err)=>{
           console.log(err);
-          // Don't logout immediately on connection error, just warn
-          showError("Backend unavailable. Some features may not work.", 3000);
-
-          // Set fallback user data to keep UI functional
-          let userData = {
-            name: user?.name,
-            email: user?.email,
-            picture: user?.picture,
-            token: user?.token,
-            hasRole: true,
-            role: 'user',
-            isAdmin: user?.email === import.meta.env.VITE_ADMIN_EMAIL,
-            roles: [],
-            permissions: [],
-            appConfig: {}
-          };
-          updateUser(user?.token, userData);
+          showError("Access token expired or you do not have enough permissions", 2000);
           setLoader(false);
+          logout();
         });
-    } else {
-      setLoader(false);
-    }
-  }, [user, projectsLoaded, dispatch, updateUser, logout, showSuccess, showError]);
+      }else{
+        setLoader(false);
+      }
+  }, [user, projectsLoaded, dispatch, updateUser, logout, showError]);
 
-  const handleSearch = (text: string) => {
-    console.log("Search Term:", text);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const handleSearch = (_text:string) => {
     dispatch({ type: 'resources/setItemsPreviousPageRequest', payload: null });
     dispatch({ type: 'resources/setItemsPageRequest', payload: null });
     dispatch({ type: 'resources/setItemsStoreData', payload: [] });
     dispatch({ type: 'resources/setItems', payload: [] });
-    // Dispatch the setSearchTerm action with the new value
     navigate('/search');
-
   };
 
   return (
     <div className="home">
       <div className='home-body'>
-        {loader ? (<>
+        { loader ? (
           <Grid
             container
             spacing={0}
             direction="column"
             alignItems="center"
             justifyContent="center"
-            sx={{ minHeight: 'inherit' }}
           >
             <CircularProgress />
           </Grid>
-        </>) :
-          (<div className='home-banner'>
-            <Grid
-              container
-              spacing={0}
-              direction="column"
-              alignItems="center"
-              justifyContent="center"
-              sx={{ minHeight: 'inherit' }}
-            >
-              <div style={{ fontSize: "1.75rem", color: "#1F1F1F", fontWeight: "500", marginBottom: "1.25rem", fontStyle: "Medium", fontFamily: '"Google Sans", sans-serif' }}>
-                <span>What would you like to discover?</span>
+        ) : (
+          <div className="home-banner">
+            <div className="home-content-wrapper">
+              <div className="home-header">
+                <div className="home-greeting">
+                  <span>Hi <span className="home-greeting-name">{sanitizeFirstName(user?.name)}</span>,</span>
+                </div>
+                <h1 className="home-title">
+                  What would you like to discover?
+                </h1>
               </div>
               <div className="home-search-container">
                 <SearchBar handleSearchSubmit={handleSearch} variant="default" dataSearch={[
-                  { name: 'BigQuery' },
-                  { name: 'Data Warehouse' },
-                  { name: 'Data Lake' },
-                  { name: 'Data Pipeline' },
-                  { name: 'GCS' }
-                ]} />
+                    { name: 'BigQuery' },
+                    { name: 'Data Warehouse' },
+                    { name: 'Data Lake' },
+                    { name: 'Data Pipeline' },
+                    { name: 'GCS' }
+                ]}/>
               </div>
-
-            </Grid>
+            </div>
           </div>
-          )}
+        )}
       </div>
     </div>
   )

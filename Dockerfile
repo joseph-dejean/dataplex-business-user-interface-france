@@ -11,8 +11,8 @@ RUN VITE_API_URL=__VITE_API_URL__ \
     VITE_ADMIN_EMAIL=__VITE_ADMIN_EMAIL__ \
     VITE_GOOGLE_PROJECT_ID=__VITE_GOOGLE_PROJECT_ID__ \
     VITE_GOOGLE_CLIENT_ID=__VITE_GOOGLE_CLIENT_ID__ \
-    VITE_GOOGLE_CLIENT_SECRET=__VITE_GOOGLE_CLIENT_SECRET__ \
     VITE_GOOGLE_REDIRECT_URI=__VITE_GOOGLE_REDIRECT_URI__ \
+    VITE_GOOGLE_CLIENT_SECRET=__VITE_GOOGLE_CLIENT_SECRET__ \
     npm run build
 
 # EXPOSE 80
@@ -23,7 +23,7 @@ FROM node:20-alpine AS backend
 WORKDIR /app
 
 # Copy backend files
-COPY backend/package*.json ./
+COPY backend/package.json ./
 RUN npm install
 
 COPY backend/ ./
@@ -35,7 +35,6 @@ COPY --from=builder /app/frontend/dist ./dist
 EXPOSE 8080
 
 COPY entrypoint.sh /entrypoint.sh
-RUN sed -i 's/\r$//' /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 # Start the server
 CMD ["/entrypoint.sh"]

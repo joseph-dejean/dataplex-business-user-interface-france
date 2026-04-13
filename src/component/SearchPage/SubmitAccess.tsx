@@ -1,11 +1,11 @@
-
 import React, { useEffect, useState } from 'react';
-import { Box, Typography, TextField, Button, IconButton, CircularProgress, Tooltip } from '@mui/material';
+import { Box, Typography, TextField, Button, IconButton, CircularProgress, Tooltip, Skeleton, FormControl, InputLabel, Select, MenuItem, FormHelperText } from '@mui/material';
 import { Close } from '@mui/icons-material';
 import { useAuth } from '../../auth/AuthProvider';
 import { useSelector } from 'react-redux';
 import axios from 'axios';
 import { URLS } from '../../constants/urls';
+import { getFormattedDateTimePartsByDateTime } from '../../utils/resourceUtils';
 
 /**
  * @file SubmitAccess.tsx
@@ -55,24 +55,32 @@ interface SubmitAccessProps {
   assetName: string;
   entry?: any; // Add entry data to extract contacts
   onSubmitSuccess: (assetName: string) => void;
-  previewData?: any;
+  previewData?: any; 
   isLookup?: boolean;
+  isCalledFromDataProducts?: boolean;
+  dataProductsDescription?: string;
+  assetCounts?: number;
+  accessGroups?: any[];
 }
 
-const SubmitAccess: React.FC<SubmitAccessProps> = ({ isOpen, onClose, assetName, entry, onSubmitSuccess, previewData, isLookup }) => {
+const SubmitAccess: React.FC<SubmitAccessProps> = ({ isOpen, onClose, assetName, entry, onSubmitSuccess, previewData, isLookup, isCalledFromDataProducts = false, dataProductsDescription = '',assetCounts = 0 , accessGroups = [] }) => {
   const [message, setMessage] = useState('');
-
-
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [contactEmails, setContactEmails] = useState<string[]>([]);
-  const [_success, setSuccess] = useState(false); // eslint-disable-line @typescript-eslint/no-unused-vars
+  const [success, setSuccess] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [localEntry, setLocalEntry] = useState<any>(null);
+  const [isLoadingEntry, setIsLoadingEntry] = useState(false);
+  const [isRequiredError, setIsRequiredError] = useState(false);
+  const [accessGroup, setAccessGroup] = useState<string>('');
   const { user } = useAuth();
   const userState = useSelector((state: any) => state.user);
-  // console.log(userState.token);
+
+  // Use locally fetched entry if available, otherwise fall back to prop
+  const effectiveEntry = localEntry ?? entry;
 
   const extractContacts = (entryData: any): any[] => {
-    console.log(entryData);
     if (!entryData || !entryData.aspects) return [];
 
     const number = entryData.entryType?.split('/')[1];
@@ -85,28 +93,47 @@ const SubmitAccess: React.FC<SubmitAccessProps> = ({ isOpen, onClose, assetName,
     const contacts = extractContacts(entryData);
 
     return (contacts.length > 0) ? contacts.map((contact: any) => {
-      const nameValue = isLookup ? contact.name : contact.structValue.fields.name.stringValue;
-      if (!nameValue) return null;
-
+      const nameValue = isLookup? contact.name : contact.structValue.fields.name.stringValue;
       // Extract email from format like "Name <email@example.com>"
-      const emailWithBrackets = nameValue.match(/<(.+?)>/);
-      if (emailWithBrackets) return emailWithBrackets[1];
-
-      // fallback: check if the string itself is an email
-      if (nameValue.includes('@')) return nameValue.trim();
-
-      return null;
+      const emailMatch = isLookup ? nameValue : nameValue.match(/<(.+?)>/); 
+      return isLookup ? emailMatch : (emailMatch ? emailMatch[1] : null);
     }).filter((email: string | null) => email !== null) : [];
   };
 
+  // Fetch entry data locally when entry prop doesn't have contacts
   useEffect(() => {
-    let contacts: string[] = extractContactEmails(entry);
+    if (!previewData?.name || !user?.token) return;
+    // If the entry prop already has matching contact data, skip fetch
+    if (entry?.aspects && entry?.name === previewData.name) {
+      setLocalEntry(null);
+      setIsLoadingEntry(false);
+      return;
+    }
+    const fetchEntryData = async () => {
+      setIsLoadingEntry(true);
+      try {
+        const response = await axios.get(
+          `${URLS.API_URL}${URLS.GET_ENTRY}?entryName=${previewData.name}`,
+          { headers: { Authorization: `Bearer ${user.token}` } }
+        );
+        setLocalEntry(response.data);
+      } catch {
+        setLocalEntry(null);
+      } finally {
+        setIsLoadingEntry(false);
+      }
+    };
+    fetchEntryData();
+  }, [previewData?.name, user?.token, entry]);
+
+  useEffect(() => {
+    const contacts: string[] = extractContactEmails(effectiveEntry);
     if (contacts.length > 0) {
       setContactEmails(contacts);
     } else {
       setContactEmails([]);
     }
-  }, [entry]); // Dependency on entry is important
+  }, [effectiveEntry]);
 
   const handleSubmit = async () => {
     if (!user?.email) {
@@ -120,53 +147,71 @@ const SubmitAccess: React.FC<SubmitAccessProps> = ({ isOpen, onClose, assetName,
       return;
     }
 
+    if(isCalledFromDataProducts && accessGroup === ''){
+      setIsRequiredError(true);
+      return;
+    }
+
     setIsSubmitting(true);
+    console.log(isSubmitting);
     setError(null);
     setSuccess(false);
 
     try {
-      console.log('Final contact emails for submission:', contactEmails);
+      console.log('Extracted contact emails:', contactEmails);
+      if(contactEmails.length > 0){
+        try{
+        const response = await axios.post(`${URLS.API_URL}${URLS.ACCESS_REQUEST}`, {
+            assetName,
+            message,
+            requesterEmail: user.email,
+            projectId: import.meta.env.VITE_GOOGLE_PROJECT_ID,
+            projectAdmin: contactEmails,
+            isDataProductRequest: isCalledFromDataProducts,
+            accessGroup: {accessGroupEmail: accessGroup, displayName: accessGroups.find(group => group.principal.googleGroup === accessGroup)?.displayName || accessGroup} 
+          },{
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${user?.token || ''}`
+          }
+        });
 
-      // Extract full resource path from entry for IAM provisioning
-      const linkedResource = entry?.fullyQualifiedName || entry?.entrySource?.resource || '';
-
-      // Extract asset type from entry (e.g. "TABLE", "VIEW", "DATA_PRODUCT", etc.)
-      const assetType = entry?.entryType?.split('/')?.pop() || entry?.entryType || '';
-
-      const response = await axios.post(`${URLS.API_URL}${URLS.ACCESS_REQUEST} `, {
-        assetName,
-        linkedResource,
-        assetType,
-        message,
-        requesterEmail: user.email,
-        projectId: import.meta.env.VITE_GOOGLE_PROJECT_ID,
-        projectAdmin: contactEmails, // Even if empty, let backend handle it
-        createServiceNowTicket: true
-      }, {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${user?.token || ''} `
+        const data = await response.data;
+        if (data.success) {
+          setSuccess(true);
+          console.log(success);
+          setMessage('');
+          onSubmitSuccess(assetName);
+          
+          // Close the panel after a short delay
+          setTimeout(() => {
+            onClose();
+            setSuccess(false);
+          }, 2000);
+        } else {
+          throw new Error(data.error || 'Failed to submit access request');
         }
-      });
+        
+      }catch(error){
+        console.log(error);
+        throw new Error('Failed to submit access request');
+      }
 
-      const data = response.data;
-      if (data.success) {
+      }else{
         setSuccess(true);
-        setMessage('');
+        console.log(success);
+        setMessage('Contacts/Emails not available for this entry');
         onSubmitSuccess(assetName);
-
+        
         // Close the panel after a short delay
         setTimeout(() => {
           onClose();
           setSuccess(false);
         }, 2000);
-      } else {
-        throw new Error(data.error || 'Failed to submit access request');
       }
-    } catch (err: any) {
-      console.error('Error submitting access request:', err);
-      const backendError = err.response?.data?.error || err.message;
-      setError(backendError || 'An unexpected error occurred');
+    } catch (error) {
+      console.error('Error submitting access request:', error);
+      setError(error instanceof Error ? error.message : 'An unexpected error occurred');
     } finally {
       setIsSubmitting(false);
     }
@@ -179,44 +224,11 @@ const SubmitAccess: React.FC<SubmitAccessProps> = ({ isOpen, onClose, assetName,
     onClose();
   };
 
-  const getFormattedDateTimeParts = (timestamp: any) => {
-    if (!timestamp) {
-      return { date: '-', time: '' };
-    }
 
-    const myDate = new Date(timestamp * 1000);
+const { date: createDate, time: createTime } = getFormattedDateTimePartsByDateTime(previewData?.createTime);
+const { date: updateDate, time: updateTime } = getFormattedDateTimePartsByDateTime(previewData?.updateTime);
 
-    const date = new Intl.DateTimeFormat('en-US', {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    }).format(myDate);
-
-    const time = new Intl.DateTimeFormat('en-US', {
-      hour: "numeric",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: true
-    }).format(myDate);
-
-    return { date, time };
-  };
-
-  const { date: createDate, time: createTime } = isLookup
-    ? {
-      date: previewData?.createTime?.split('T')[0] || '-',
-      time: previewData?.createTime?.split('T')[1]?.slice(0, 8) || ''
-    }
-    : getFormattedDateTimeParts(previewData?.createTime?.seconds);
-
-  const { date: updateDate, time: updateTime } = isLookup
-    ? {
-      date: previewData?.updateTime?.split('T')[0] || '-',
-      time: previewData?.updateTime?.split('T')[1]?.slice(0, 8) || ''
-    }
-    : getFormattedDateTimeParts(previewData?.updateTime?.seconds);
-
-  return ((previewData != null || previewData != undefined) && entry) ? (
+return (previewData != null) ?(
     <Box
       sx={{
         position: 'fixed',
@@ -239,7 +251,7 @@ const SubmitAccess: React.FC<SubmitAccessProps> = ({ isOpen, onClose, assetName,
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          gap: '8.75rem', /* 140px */
+          gap: '16px',
           padding: '20px 24px',
           borderBottom: '1px solid #DADCE0',
           width: '31.1875rem' /* 499px */
@@ -253,7 +265,10 @@ const SubmitAccess: React.FC<SubmitAccessProps> = ({ isOpen, onClose, assetName,
             fontWeight: '500',
             color: '#1F1F1F',
             lineHeight: '1.333em',
-            textAlign: 'left'
+            textAlign: 'left',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap'
           }}
         >
           Request Access for "{assetName.charAt(0).toUpperCase() + assetName.slice(1)}"
@@ -265,6 +280,7 @@ const SubmitAccess: React.FC<SubmitAccessProps> = ({ isOpen, onClose, assetName,
             height: '1.5rem', /* 24px */
             color: '#202124',
             padding: 0,
+            flexShrink: 0,
             '&:hover': {
               backgroundColor: 'transparent'
             }
@@ -286,6 +302,11 @@ const SubmitAccess: React.FC<SubmitAccessProps> = ({ isOpen, onClose, assetName,
           // border: '1px solid red'
         }}
       >
+        {isCalledFromDataProducts && (
+          <Box sx={{ borderBottom: '1px solid #DADCE0', paddingBottom: '16px' }}>
+          {dataProductsDescription}
+        </Box>
+        )}
         {/* Request Details Section */}
         <Box sx={{ borderBottom: '1px solid #DADCE0', paddingBottom: '16px' }}>
           <Typography
@@ -302,7 +323,7 @@ const SubmitAccess: React.FC<SubmitAccessProps> = ({ isOpen, onClose, assetName,
             sx={{
               display: 'flex',
               justifyContent: 'space-between',
-              alignItems: 'flex-start',
+              alignItems: 'flex-start',   
               gap: '16px'
             }}
           >
@@ -339,7 +360,7 @@ const SubmitAccess: React.FC<SubmitAccessProps> = ({ isOpen, onClose, assetName,
                   fontFamily: '"Google Sans Text", sans-serif',
                   fontSize: '11px',
                   // Note: Original code had fontWeight 400 here, you may want 500 for consistency
-                  fontWeight: '500',
+                  fontWeight: '500', 
                   color: '#575757',
                   marginBottom: '4px'
                 }}
@@ -358,6 +379,41 @@ const SubmitAccess: React.FC<SubmitAccessProps> = ({ isOpen, onClose, assetName,
                 {updateTime}
               </Typography>
             </Box>
+          </Box>
+          {/* Access Count Block */}
+          <Box
+            sx={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'flex-start',   
+              gap: '16px',
+              marginTop: '20px'
+            }}
+          >
+            {isCalledFromDataProducts && (<Box sx={{ flex: '1 1 auto' }}>
+              <Typography
+                sx={{
+                  fontFamily: '"Google Sans Text", sans-serif',
+                  fontSize: '11px',
+                  // Note: Original code had fontWeight 400 here, you may want 500 for consistency
+                  fontWeight: '500', 
+                  color: '#575757',
+                  marginBottom: '4px'
+                }}
+              >
+                Assets
+              </Typography>
+              <Typography
+                sx={{
+                  fontSize: '14px',
+                  fontWeight: '400',
+                  color: '#1F1F1F'
+                }}
+              >
+                {assetCounts}
+              </Typography>
+            </Box>
+            )}
           </Box>
         </Box>
 
@@ -382,60 +438,126 @@ const SubmitAccess: React.FC<SubmitAccessProps> = ({ isOpen, onClose, assetName,
             }}
           >
             {
-              extractContacts(entry).length > 0 ? (
-                extractContacts(entry).map((contact: any, index: number) => (
-                  <Box key={index} sx={{ flex: '1 1 auto' }}>
-                    <Typography
-                      sx={{
-                        fontFamily: '"Google Sans Text", sans-serif',
-                        fontSize: '11px',
-                        fontWeight: '500',
-                        color: '#575757',
-                        marginBottom: '4px'
-                      }}
-                    >
-                      {isLookup ? contact.role : contact.structValue.fields.role.stringValue}
-                    </Typography>
-                    <Typography
-                      sx={{
-                        fontFamily: '"Google Sans Text", sans-serif',
-                        fontSize: '14px',
-                        fontWeight: '400',
-                        color: '#1F1F1F'
-                      }}
-                    >
-                      {isLookup ?
-                        (contact.name.split('<').length > 1
+              isLoadingEntry ? (
+                <>
+                  {[1, 2].map((i) => (
+                    <Box key={i} sx={{ flex: '1 1 auto' }}>
+                      <Skeleton variant="text" width={60} height={16} sx={{ marginBottom: '4px' }} />
+                      <Skeleton variant="text" width={120} height={20} />
+                    </Box>
+                  ))}
+                </>
+              ) : extractContacts(effectiveEntry).length > 0 ? (
+                extractContacts(effectiveEntry).map((contact: any, index: number) => (
+                    <Box key={index} sx={{ flex: '1 1 auto' }}>
+                      <Typography
+                        sx={{
+                          fontFamily: '"Google Sans Text", sans-serif',
+                          fontSize: '11px',
+                          fontWeight: '500',
+                          color: '#575757',
+                          marginBottom: '4px'
+                        }}
+                      >
+                        {isLookup ? contact.role : contact.structValue.fields.role.stringValue}
+                      </Typography>
+                      <Typography
+                        sx={{
+                          fontFamily: '"Google Sans Text", sans-serif',
+                          fontSize: '14px',
+                          fontWeight: '400',
+                          color: '#1F1F1F'
+                        }}
+                      >
+                        {isLookup ?
+                          (contact.name.split('<').length > 1
                           ? contact.name.split('<')[1].slice(0, -1)
                           : contact.name.length > 0
                             ? contact.name
                             : "--")
-                        :
+                          :
 
-                        (contact.structValue.fields.name.stringValue.split('<').length > 1
+                          (contact.structValue.fields.name.stringValue.split('<').length > 1
                           ? contact.structValue.fields.name.stringValue.split('<')[1].slice(0, -1)
                           : contact.structValue.fields.name.stringValue.length > 0
                             ? contact.structValue.fields.name.stringValue
                             : "--")
-                      }
-                    </Typography>
-                  </Box>
-                ))
-              ) : (
-                <Typography
-                  sx={{
-                    fontFamily: '"Google Sans Text", sans-serif',
-                    fontSize: '14px',
-                    fontWeight: '400',
-                    color: '#1F1F1F'
-                  }}
-                >
-                  -
-                </Typography>
-              )
-            }
+                        }
+                      </Typography>
           </Box>
+        ))
+    ) : (
+          <Typography
+            sx={{
+              fontFamily: '"Google Sans Text", sans-serif',
+              fontSize: '14px',
+              fontWeight: '400',
+              color: '#1F1F1F'
+            }}
+          >
+            -
+          </Typography>
+        )
+      }
+    </Box>
         </Box>
+
+        {/* Access group Section for dataProducts */}
+        { isCalledFromDataProducts && (
+          <Box>
+            <Typography
+              sx={{
+                fontSize: '14px',
+                fontWeight: '500',
+                color: '#1F1F1F',
+              marginBottom: '12px'
+            }}
+          >
+            What access are you seeking?
+          </Typography>
+          <Tooltip
+            title={accessGroups.length === 0 ? "No access groups are available for this data product" : ""}
+            arrow
+            placement="top"
+          >
+            <FormControl fullWidth disabled={accessGroups.length === 0}>
+                <InputLabel id="submit-access-select-helper-label">Access Group *</InputLabel>
+                <Select
+                    sx={{
+                        fontSize: '0.9rem',
+                        lineHeight: 1.4,
+                    }}
+                    labelId="submit-access-select-helper-label"
+                    id="submit-access-select-helper"
+                    name="submit-access-group-selector"
+                    value={accessGroup || ''}
+                    label="Access Group *"
+                    onChange={(event) => {
+                        setIsRequiredError(false);
+                        const selectedGroup = event.target.value;
+                        if (setAccessGroup) {
+                            setAccessGroup(selectedGroup);
+                        }}
+                    }
+                >
+                    {
+                        accessGroups.map((val: any, index: number) => (
+                            <MenuItem
+                                sx={{
+                                    fontSize: '0.9rem',
+                                    lineHeight: 1.4,
+                                }}
+                                key={index} value={val?.principal?.googleGroup}>
+                                {val?.displayName || val?.id}
+                            </MenuItem>
+                        ))
+                    }
+                </Select>
+                {isRequiredError && <FormHelperText style={{ color: 'red' }}>Please select an access group for your request it's required.</FormHelperText>}
+            </FormControl>
+          </Tooltip>
+        </Box>
+        )}
 
         {/* Context and Message Section */}
         <Box>
@@ -458,7 +580,7 @@ const SubmitAccess: React.FC<SubmitAccessProps> = ({ isOpen, onClose, assetName,
               marginBottom: '16px'
             }}
           >
-            The following message will be send to the the owner of the asset.
+            The following message will be send to the the owner of the asset. 
             {/* The email will include your request justification, 
             and a link to the Google Cloud console where your data producer can address your request. */}
           </Typography>
@@ -530,34 +652,34 @@ const SubmitAccess: React.FC<SubmitAccessProps> = ({ isOpen, onClose, assetName,
         >
           Cancel
         </Button>
-        <Tooltip title={isSubmitting ? "Submitting..." : "Click here to submit an access request"} arrow>
-          <Button
-            disabled={isSubmitting}
-            onClick={handleSubmit}
-            variant="contained"
-            style={{ color: '#FFFFFF', backgroundColor: '#0E4DCA' }}
-            sx={{
-              fontSize: '14px',
-              fontWeight: '500',
-              backgroundColor: '#0E4DCA',
-              color: '#FFFFFF',
-              textTransform: 'none',
-              borderRadius: '100px',
-              padding: '8px 16px',
-              '&:hover': {
-                backgroundColor: '#0B3DA8'
-              },
-              '&:disabled': {
-                backgroundColor: '#A0A0A0',
-                opacity: 0.6
-              }
-            }}
-          >
-            {isSubmitting ? 'Submitting...' : 'Submit'}
-          </Button>
+        <Tooltip title={extractContacts(effectiveEntry).length > 0 ? "Click here to send an request access email" : "No contact information available to request access"} arrow>
+        <Button
+          //disabled = {contactEmails.length > 0 ? false : true}
+          onClick={() => {
+            if(extractContacts(effectiveEntry).length > 0) handleSubmit();
+          }}
+          variant="contained"
+          style={{color: '#FFFFFF',backgroundColor: '#0E4DCA'}}
+          sx={{
+            fontSize: '14px',
+            fontWeight: '500',
+            backgroundColor: extractContacts(effectiveEntry).length > 0 ? '#0E4DCA' : '#A0A0A0',
+            color: '#FFFFFF',
+            textTransform: 'none',
+            borderRadius: '100px',
+            padding: '8px 16px',
+            opacity: extractContacts(effectiveEntry).length > 0 ? 1 : 0.6,
+            '&:hover': {
+              backgroundColor: extractContacts(effectiveEntry).length > 0 ? '#0B3DA8' : '#909090'
+            },
+            cursor: extractContacts(effectiveEntry).length > 0 ? 'pointer' : 'not-allowed',
+          }}
+        >
+          Submit
+        </Button>
         </Tooltip>
       </Box>
-    </Box >
+    </Box>
   ) : (<>
     <CircularProgress />
   </>);

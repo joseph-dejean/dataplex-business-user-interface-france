@@ -1,10 +1,9 @@
 import { useState, useEffect } from 'react';
 import { Box, Typography, Button, Dialog, DialogTitle, DialogContent, DialogActions, CircularProgress, IconButton } from '@mui/material';
-import { ArrowBack, Refresh } from '@mui/icons-material';
+import { ArrowBack } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import MultiSelect from '../MultiSelect/MultiSelect';
 import axios from 'axios';
-import AccessHistory from './AccessHistory';
 import { URLS } from '../../constants/urls';
 import { useAuth } from '../../auth/AuthProvider';
 
@@ -48,7 +47,7 @@ const AdminPanel = () => {
   const { user, updateUser } = useAuth();
   const navigate = useNavigate();
   const id_token = user?.token || '';
-
+  
   const [aspectName, setAspectName] = useState<string[]>(user?.appConfig?.browseByAspectTypes || []);
   const [aspectType, setAspectType] = useState<string[]>(user?.appConfig?.browseByAspectTypesLabels || []);
   const [assets, setAssets] = useState<string[]>(user?.appConfig?.defaultSearchAssets || []);
@@ -60,64 +59,50 @@ const AdminPanel = () => {
     message: string;
   }>({ type: 'success', message: '' });
   const [loading, setLoading] = useState(true);
-  const [aspectTypeOptions, setAspectTypeOptions] = useState<any[]>([]);
+  const [aspectTypeOptions, setAspectTypeOptions] = useState<any>({});
   const [aspectTypeEditOptions, setAspectTypeEditOptions] = useState<any>({});
   const [selectedAssetsByProduct, setSelectedAssetsByProduct] = useState<Record<string, any[]>>({});
   const [selectedAspectNamesByType, setSelectedAspectNamesByType] = useState<Record<string, string[]>>({});
-  const [initError, setInitError] = useState<string | null>(null);
 
-  const showSuccess = (message: string) => {
-    setAcknowledgeModalData({ type: 'success', message });
-    setAcknowledgeModalOpen(true);
-  };
 
-  const fetchAppConfig = (showNotification = false) => {
-    setLoading(true);
-    setInitError(null);
+  useEffect(()=> {
+    // axios.get(URLS.API_URL + URLS.APP_CONFIG, {
+    //   headers: {
+    //     Authorization: `Bearer ${id_token}`,
+    //   }
+    // }).then(() => {
+    //   setSelectedAssetsByProduct(user?.appConfig?.defaultSearchAssets || []);
+    //   setSelectedAspectNamesByType(user?.appConfig?.browseByAspectTypes || []);
+    //   console.log('Refreshed app-config');
+    // }).catch(() => {});
 
-    if (!id_token) {
-      setInitError('No authentication token available. Please log in again.');
-      setLoading(false);
-      return;
-    }
+    if(user?.appConfig && user?.appConfig.aspects && Array.isArray(user?.appConfig.aspects)){
+      let o = user?.appConfig.aspects.map((aspect:any) => (aspect.dataplexEntry.entrySource.displayName));
+      let n = user?.appConfig.aspects.map((aspect:any) => (aspect.dataplexEntry.entrySource.resource));
+      setAspectTypeOptions([...new Set(o)]);
+      console.log("Aspect Type Options: ", aspectTypeOptions);
+      console.log("Aspect Type : ", n);
 
-    axios.get(URLS.API_URL + URLS.APP_CONFIG, {
-      headers: {
-        Authorization: `Bearer ${id_token}`,
-      }
-    }).then((res) => {
-      const appConfig = res.data;
-      const userData = { ...user!, appConfig };
-      updateUser(id_token, userData);
+      //let q = `name=${n.join('|')}`;
 
-      if (appConfig.aspects && Array.isArray(appConfig.aspects)) {
-        let o = appConfig.aspects.map((aspect: any) => (aspect.dataplexEntry?.entrySource?.displayName || 'Unknown'));
-        let n = appConfig.aspects.map((aspect: any) => (aspect.dataplexEntry?.entrySource?.resource || ''));
-        setAspectTypeOptions([...new Set(o.filter(Boolean))]);
-
-        axios.post(URLS.API_URL + URLS.BATCH_ASPECTS, { entryNames: n.filter(Boolean) }, {
-          headers: { Authorization: `Bearer ${id_token}`, 'Content-Type': 'application/json' }
-        }).then(response => {
-          setAspectTypeEditOptions(response.data);
-          setLoading(false);
-          if (showNotification) showSuccess("Metadata configuration refreshed from Dataplex!");
-        }).catch((batchErr) => {
-          console.error("Batch aspects fetch failed:", batchErr);
-          setLoading(false);
-          // Continue without aspect edit options
-        });
-      } else {
+      axios.post(URLS.API_URL+ URLS.BATCH_ASPECTS, {
+          entryNames: n
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${id_token}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      ).then(response => {
+        console.log('name options:', response.data);
+        setAspectTypeEditOptions(response.data);//.map((aspect:any) => (aspect.entry.entrySource.displayName));
         setLoading(false);
-      }
-    }).catch((err) => {
-      console.error("App config fetch failed:", err);
-      setInitError(err.response?.data?.message || err.message || 'Failed to load admin configuration. Please check your permissions.');
-      setLoading(false);
-    });
-  };
+      }).catch(error => {
+        console.error('Error saving configuration:', error);
+      });
 
-  useEffect(() => {
-    fetchAppConfig();
+    }
   }, []);
 
 
@@ -128,7 +113,7 @@ const AdminPanel = () => {
     "Cloud Pub/Sub",
     "Cloud SQL",
     "Dataform",
-    "Dataplex Universal Catalog",
+    "Knowledge Catalog",
     "Dataproc Metastore",
     "Spanner",
     "Vertex AI",
@@ -137,13 +122,13 @@ const AdminPanel = () => {
 
   // Edit options for each product (assets that can be selected for each product)
   const productEditOptions = {
-    "Analytics Hub": ["Data Exchange", "Listing"],
+    "Analytics Hub" : ["Data Exchange","Listing"],
     "BigQuery": ["Tables", "Views", "Datasets", "Models", "Routines", "External Tables"],
     "Cloud BigTable": ["Tables", "Instances", "Clusters", "Backups"],
     "Cloud Pub/Sub": ["Topics", "Subscriptions", "Schemas", "Snapshots"],
-    "Cloud SQL": ["Instance", "Database", "Table", "View"],
-    "Dataform": ["Repository", "Code asset"],
-    "Dataplex Universal Catalog": ["Lakes", "Zones", "Assets", "Tasks", "Data Quality"],
+    "Cloud SQL" :["Instance","Database","Table","View"],
+    "Dataform" : ["Repository","Code asset"],
+    "Knowledge Catalog": ["Lakes", "Zones", "Assets", "Tasks", "Data Quality"],
     "Dataproc Metastore": ["Databases", "Tables", "Functions", "Partitions"],
     "Spanner": ["Databases", "Tables", "Indexes", "Backups"],
     "Vertex AI": ["Models", "Endpoints", "Training Jobs", "Datasets"],
@@ -190,10 +175,12 @@ const AdminPanel = () => {
     });
 
     // Build nested structures keyed by selected items with their selected sub-items
+    const PRODUCT_API_NAMES: Record<string, string> = { "Knowledge Catalog": "Dataplex Universal Catalog" };
     const assetsObj: Record<string, string[]> = {};
     products.forEach((product) => {
       const sp = selectedAssetsByProduct[product] || [];
-      assetsObj[product] = sp;
+      const apiProduct = PRODUCT_API_NAMES[product] || product;
+      assetsObj[apiProduct] = sp;
     });
     setSelectedAssetsByProduct(assetsObj);
 
@@ -204,17 +191,19 @@ const AdminPanel = () => {
     });
     setSelectedAspectNamesByType(aspectNamesObj);
 
+    const apiProducts = products.map((p) => PRODUCT_API_NAMES[p] || p);
+
     console.log('Aspect Names Array: ', aspectNamesObj);
     console.log('Aspect Type: ', aspectType);
     console.log('Assets: ', assetsObj);
-    console.log('Products: ', products);
+    console.log('Products: ', apiProducts);
 
-    axios.post(URLS.API_URL + URLS.ADMIN_CONFIGURE, {
-      aspectName: aspectNamesObj,
-      aspectType: aspectType,
-      assets: assetsObj,
-      products: products
-    },
+    axios.post(URLS.API_URL+ URLS.ADMIN_CONFIGURE, {
+        aspectName: aspectNamesObj,
+        aspectType: aspectType,
+        assets: assetsObj,
+        products: apiProducts
+      },
       {
         headers: {
           Authorization: `Bearer ${id_token}`,
@@ -248,24 +237,24 @@ const AdminPanel = () => {
     setAcknowledgeModalOpen(false);
     if (acknowledgeModalData.type === 'success') {
       let appConfig = {
-        aspects: user?.appConfig?.aspects,
-        projects: user?.appConfig?.projects,
-        defaultSearchProduct: products,
-        defaultSearchAssets: selectedAssetsByProduct,
-        browseByAspectTypes: selectedAspectNamesByType,
-        browseByAspectTypesLabels: aspectType,
+          aspects: user?.appConfig?.aspects,
+          projects: user?.appConfig?.projects,
+          defaultSearchProduct: products,
+          defaultSearchAssets: selectedAssetsByProduct,
+          browseByAspectTypes: selectedAspectNamesByType,
+          browseByAspectTypesLabels: aspectType,
       };
       let userData = {
         name: user?.name,
         email: user?.email,
         picture: user?.picture,
         token: user?.token,
+        tokenExpiry: user?.tokenExpiry,
+        tokenIssuedAt: user?.tokenIssuedAt,
         hasRole: user?.hasRole,
         roles: user?.roles,
         permissions: user?.permissions,
-        appConfig: appConfig,
-        role: user?.role,
-        isAdmin: user?.isAdmin ?? false
+        appConfig: appConfig
       };
 
       updateUser(user?.token, userData);
@@ -273,49 +262,10 @@ const AdminPanel = () => {
     }
   };
 
-  // Show error state if initialization failed
-  if (initError) {
-    return (
-      <Box
-        sx={{
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center',
-          alignItems: 'center',
-          minHeight: '100vh',
-          backgroundColor: '#F8FAFD',
-          gap: 2,
-          padding: 3
-        }}
-      >
-        <Typography variant="h6" sx={{ color: '#D32F2F' }}>
-          Failed to Load Admin Panel
-        </Typography>
-        <Typography variant="body1" sx={{ color: '#575757', textAlign: 'center', maxWidth: 500 }}>
-          {initError}
-        </Typography>
-        <Button
-          variant="contained"
-          onClick={() => navigate('/home')}
-          sx={{ mt: 2, backgroundColor: '#0E4DCA' }}
-        >
-          Back to Home
-        </Button>
-        <Button
-          variant="outlined"
-          onClick={() => fetchAppConfig()}
-          sx={{ borderColor: '#0E4DCA', color: '#0E4DCA' }}
-        >
-          Retry
-        </Button>
-      </Box>
-    );
-  }
-
   return !loading ? (
-    <Box
-      sx={{
-        backgroundColor: '#F8FAFD',
+    <Box 
+      sx={{ 
+        backgroundColor: '#F8FAFD', 
         minHeight: '100vh',
         padding: { xs: '0px 0.5rem', sm: '0px 1rem' },
         display: 'flex',
@@ -372,24 +322,37 @@ const AdminPanel = () => {
           </Typography>
         </Box>
 
-        {/* Sections Grid */}
-        <Box sx={{ px: { xs: 0, sm: '160px' }, maxWidth: '1400px' }}>
+        {/* Search Sections */}
+        <Box sx={{ 
+          display: 'flex', 
+          flex: 1,
+          flexDirection: { xs: 'column', lg: 'row' },
+          gap: { xs: '40px', lg: '20px' }
+        }}>
           {/* Default Search Section */}
-          <Box sx={{ mb: 6 }}>
+          <Box sx={{ flex: 1 }}>
             <Typography
               sx={{
                 fontWeight: 500,
+                fontStyle: 'normal',
                 fontSize: '18px',
+                lineHeight: '24px',
+                letterSpacing: '0px',
                 color: '#575757',
-                mb: 3
+                marginBottom: '20px',
+                marginLeft: { xs: '0px', sm: '160px' },
+                textAlign: { xs: 'center', sm: 'left' }
               }}
             >
               Default Search
             </Typography>
-            <Box sx={{
-              display: 'grid',
-              gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' },
-              gap: 4
+            
+            <Box sx={{ 
+              display: 'flex', 
+              gap: '40px', 
+              flexWrap: 'wrap',
+              marginLeft: { xs: '0px', sm: '160px' },
+              justifyContent: { xs: 'center', sm: 'flex-start' }
             }}>
               <MultiSelect
                 label="Products"
@@ -398,36 +361,39 @@ const AdminPanel = () => {
                 value={products}
                 onChange={setProducts}
                 editOptions={productEditOptions}
-                onEditSelectionsChange={setSelectedAssetsByProduct}
-                css={{ width: '100%' }}
-              />
-              <MultiSelect
-                label="Assets"
-                placeholder="Select Assets"
-                options={Object.values(productEditOptions).flat()}
-                value={assets}
-                onChange={setAssets}
-                css={{ width: '100%' }}
+                //onSubChange={setAssets}
+                css={{ 
+                  width: '100%',
+                  maxWidth: '552px'
+                }}
               />
             </Box>
           </Box>
 
           {/* Default Browse Section */}
-          <Box sx={{ mb: 6 }}>
+          <Box sx={{ flex: 1}}>
             <Typography
               sx={{
                 fontWeight: 500,
+                fontStyle: 'normal',
                 fontSize: '18px',
+                lineHeight: '24px',
+                letterSpacing: '0px',
                 color: '#575757',
-                mb: 3
+                marginBottom: '20px',
+                marginRight: { xs: '0px', sm: '160px' },
+                textAlign: { xs: 'center', sm: 'left' }
               }}
             >
               Default Browse
             </Typography>
-            <Box sx={{
-              display: 'grid',
-              gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' },
-              gap: 4
+            
+            <Box sx={{ 
+              display: 'flex', 
+              gap: '40px', 
+              flexWrap: 'wrap',
+              marginRight: { xs: '0px', sm: '160px' },
+              justifyContent: { xs: 'center', sm: 'flex-start' }
             }}>
               <MultiSelect
                 label="Aspect Type"
@@ -436,70 +402,19 @@ const AdminPanel = () => {
                 value={aspectType}
                 onChange={setAspectType}
                 editOptions={aspectTypeEditOptions}
-                onEditSelectionsChange={setSelectedAspectNamesByType}
-                css={{ width: '100%' }}
-              />
-              <MultiSelect
-                label="Aspect Name"
-                placeholder="Select Aspect Name"
-                options={Array.isArray(aspectTypeOptions) ? aspectTypeOptions : []}
-                value={aspectName}
-                onChange={setAspectName}
-                css={{ width: '100%' }}
+                //onSubChange={setAspectName}
+                css={{ 
+                  width: '100%',
+                  maxWidth: '552px'
+                }}
               />
             </Box>
           </Box>
         </Box>
 
-        {/* Governance Section */}
-        <Box sx={{ mb: 6 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, marginLeft: { xs: '0px', sm: '160px' } }}>
-            <Typography variant="h6" sx={{ color: '#575757' }}>
-              Governance and Browser By Annotation configuration
-            </Typography>
-            <Button
-              variant="outlined"
-              startIcon={<Refresh />}
-              size="small"
-              onClick={() => fetchAppConfig(true)}
-              sx={{ color: '#0E4DCA', borderColor: '#0E4DCA' }}
-            >
-              Sync with Dataplex
-            </Button>
-          </Box>
-          <Box sx={{
-            marginLeft: { xs: '0px', sm: '160px' },
-            p: 3,
-            border: '1px solid #DADCE0',
-            borderRadius: '12px',
-            backgroundColor: '#F8FAFD',
-            maxWidth: '552px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 2
-          }}
-          >
-            <Typography variant="body1">
-              Manage project-level and resource-level IAM permissions for Dataplex.
-            </Typography>
-            <Button
-              variant="contained"
-              onClick={() => navigate('/admin-permissions')}
-              sx={{ backgroundColor: '#0E4DCA', alignSelf: 'flex-start' }}
-            >
-              Manage Permissions Dashboard
-            </Button>
-          </Box>
-        </Box>
-
-        {/* Access History Section */}
-        <Box sx={{ mb: 6, px: { xs: 0, sm: '160px' }, maxWidth: '1400px' }}>
-          <AccessHistory />
-        </Box>
-
         {/* Action Buttons */}
-        <Box sx={{
-          display: 'flex',
+        <Box sx={{ 
+          display: 'flex', 
           gap: '16px',
           marginLeft: { xs: '0px', sm: '160px' },
           marginRight: { xs: '0px', sm: '160px' },
@@ -508,56 +423,56 @@ const AdminPanel = () => {
           alignItems: { xs: 'center', sm: 'flex-end' },
           marginTop: { xs: '40px', sm: '0px' }
         }}>
-          <Box sx={{
-            display: 'flex',
-            flexDirection: { xs: 'column', sm: 'row' },
-            gap: '16px',
-            padding: '16px',
-            width: { xs: '100%', sm: 'auto' },
-            maxWidth: { xs: '300px', sm: 'none' }
-          }}>
-            <Button
-              variant="outlined"
-              onClick={handleClearAll}
-              sx={{
-                fontWeight: 500,
-                fontSize: '14px',
-                lineHeight: '1.43em',
-                color: '#575757',
-                borderColor: '#575757',
-                borderRadius: '8px',
-                padding: '12px 24px',
-                textTransform: 'none',
+            <Box sx={{ 
+                display: 'flex',
+                flexDirection: { xs: 'column', sm: 'row' },
+                gap: '16px',
+                padding: '16px',
                 width: { xs: '100%', sm: 'auto' },
-                '&:hover': {
-                  borderColor: '#1F1F1F',
-                  backgroundColor: 'rgba(31, 31, 31, 0.04)',
-                },
-              }}
-            >
-              Clear
-            </Button>
-            <Button
-              variant="contained"
-              onClick={handleSave}
-              sx={{
-                fontWeight: 500,
-                fontSize: '14px',
-                lineHeight: '1.43em',
-                color: '#FFFFFF',
-                backgroundColor: '#0E4DCA',
-                borderRadius: '8px',
-                padding: '12px 24px',
-                textTransform: 'none',
-                width: { xs: '100%', sm: 'auto' },
-                '&:hover': {
-                  backgroundColor: '#0A3DA0',
-                },
-              }}
-            >
-              Save
-            </Button>
-          </Box>
+                maxWidth: { xs: '300px', sm: 'none' }
+            }}>
+                <Button
+                    variant="outlined"
+                    onClick={handleClearAll}
+                    sx={{
+                    fontWeight: 500,
+                    fontSize: '14px',
+                    lineHeight: '1.43em',
+                    color: '#575757',
+                    borderColor: '#575757',
+                    borderRadius: '8px',
+                    padding: '12px 24px',
+                    textTransform: 'none',
+                    width: { xs: '100%', sm: 'auto' },
+                    '&:hover': {
+                        borderColor: '#1F1F1F',
+                        backgroundColor: 'rgba(31, 31, 31, 0.04)',
+                    },
+                    }}
+                >
+                    Clear
+                </Button>
+                <Button
+                    variant="contained"
+                    onClick={handleSave}
+                    sx={{
+                    fontWeight: 500,
+                    fontSize: '14px',
+                    lineHeight: '1.43em',
+                    color: '#FFFFFF',
+                    backgroundColor: '#0E4DCA',
+                    borderRadius: '8px',
+                    padding: '12px 24px',
+                    textTransform: 'none',
+                    width: { xs: '100%', sm: 'auto' },
+                    '&:hover': {
+                        backgroundColor: '#0A3DA0',
+                    },
+                    }}
+                >
+                    Save
+                </Button>
+            </Box>
         </Box>
       </Box>
 

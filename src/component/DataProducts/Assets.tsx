@@ -7,6 +7,7 @@ import {
 } from '@mui/material';
 import { useSelector } from 'react-redux';
 import DataProductAssets from './DataProductAssets';
+import ShimmerLoader from '../Shimmer/ShimmerLoader';
 import { useAuth } from '../../auth/AuthProvider';
 import axios from 'axios';
 
@@ -61,53 +62,53 @@ import axios from 'axios';
  * @returns {JSX.Element} The rendered React component for the Overview tab.
  */
 
-const StringRenderer = ({ value }: any) => {
+const StringRenderer = ({ value }:any) => {
   // Check if the string contains HTML tags
   const isHtml = /<\/?[a-z][\s\S]*>/i.test(value);
   if (isHtml) {
     // If it's HTML, render it directly. CAUTION: This can be a security risk (XSS) if the HTML is from an untrusted source.
     return <div dangerouslySetInnerHTML={{ __html: value }} />;
   }
-  return <span style={{ fontSize: "14px", textTransform: "capitalize", padding: "0px 5px" }}>{value}</span>;
+  return <span style={{fontSize:"14px", textTransform:"capitalize", padding:"0px 5px"}}>{value}</span>;
 };
 
-const NumberRenderer = ({ value }: any) => {
-  return <span style={{ fontSize: "14px" }}>{value}</span>;
+const NumberRenderer = ({ value }:any) => {
+  return <span style={{fontSize:"14px"}}>{value}</span>;
 };
 
-const BooleanRenderer = ({ value }: any) => {
-  return value ?
-    <span style={{ fontSize: "14px" }}>TRUE</span> :
-    <span style={{ fontSize: "14px" }}>FALSE</span>;
+const BooleanRenderer = ({ value }:any) => {
+  return value ? 
+    <span style={{fontSize:"14px"}}>TRUE</span> : 
+    <span style={{fontSize:"14px"}}>FALSE</span>;
 };
 
-const ListRenderer = ({ values }: any) => {
+const ListRenderer = ({ values }:any) => {
   return (<>
-    {values.map((item: any) => (
-      <FieldRenderer field={item} />
-    ))}
+      {values.map((item:any) => (
+            <FieldRenderer field={item} />
+      ))}
   </>);
 };
 
 const StructRenderer = ({ fields }: any) => {
   return (
-    <Box style={{ paddingTop: "10px" }}>
+    <Box style={{paddingTop:"10px"}}>
       {Object.entries(fields).map(([key, value]) => (
         <div key={key}>
-          <span style={{ fontWeight: "600", fontSize: "12px", textTransform: "capitalize" }}>{key.replace(/_/g, ' ')}:</span>
-          <FieldRenderer field={value} />
-        </div>
+            <span style={{fontWeight:"600", fontSize:"12px", textTransform:"capitalize"}}>{key.replace(/_/g, ' ')}:</span>
+            <FieldRenderer field={value} />
+        </div>   
       ))}
-      <br />
+      <br/>
     </Box>
   );
 };
 
 // --- The Main Field Renderer (Component) ---
 
-const FieldRenderer = ({ field }: any) => {
+const FieldRenderer = ({ field } : any) => {
   if (!field || !field.kind) {
-    return <span style={{ fontSize: "14px" }}>-</span>;
+    return <span style={{fontSize:"14px"}}>-</span>; 
   }
 
   switch (field.kind) {
@@ -122,7 +123,7 @@ const FieldRenderer = ({ field }: any) => {
     case 'structValue':
       return <StructRenderer fields={field.structValue.fields} />;
     default:
-      return <span style={{ fontWeight: "500", fontSize: "14px" }}>Unknown kind: {field.kind}</span>;
+      return <span  style={{fontWeight:"500", fontSize:"14px"}}>Unknown kind: {field.kind}</span>;
   }
 };
 
@@ -134,193 +135,144 @@ interface AssetsProps {
 }
 
 // Tab component
-const Assets: React.FC<AssetsProps> = ({ entry, css, onAssetPreviewChange }) => {
+const Assets: React.FC<AssetsProps> = ({ entry, css, onAssetPreviewChange  }) => {
 
 
-  //const dispatch = useDispatch<AppDispatch>();
-  const { dataProductAssets, dataProductAssetsStatus } = useSelector((state: any) => state.dataProducts);
-  const [dataProductsAssetsList, setDataProductsAssetsList] = useState([]);
-  const [assetListLoader, setAssetListLoader] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const { user } = useAuth();
-  const id_token = user?.token;
-  // const [assetPreviewData, setAssetPreviewData] = useState<any | null>(null);
-  // const [isAssetPreviewOpen, setIsAssetPreviewOpen] = useState(false);
+    //const dispatch = useDispatch<AppDispatch>();
+    const {dataProductAssets, dataProductAssetsStatus }= useSelector((state: any) => state.dataProducts);
+    const [dataProductsAssetsList, setDataProductsAssetsList] = useState([]);
+    const [assetListLoader, setAssetListLoader] = useState(false);
+    const [searchTerm, setSearchTerm] = useState('');
+    const { user } = useAuth();
+    const id_token = user?.token;
+    // const [assetPreviewData, setAssetPreviewData] = useState<any | null>(null);
+    // const [isAssetPreviewOpen, setIsAssetPreviewOpen] = useState(false);
+      
 
+    const number = entry?.entryType?.split('/')[1];
 
-  const number = entry?.entryType?.split('/')[1];
-
-  useEffect(() => {
-    console.log('--- FRONTEND_ASSETS_VERSION: 3.3 ---');
-    console.log('Assets Entry Name:', entry?.name);
-    console.log('num', number);
-    if (dataProductAssets.length === 0) return;
-    if (dataProductAssetsStatus !== 'succeeded') return;
-    if (dataProductAssetsStatus === 'succeeded' && dataProductAssets.length === 0) {
-      setDataProductsAssetsList([]);
-      return;
-    }
-
-    if (dataProductAssetsStatus === 'succeeded' && dataProductAssets.length > 0) {
-      let a = dataProductAssets.map((item: any) => {
-        if (!item.resource) return '';
-        const resource = item.resource;
-
-        // Extract system (e.g. 'bigquery') from //bigquery.googleapis.com/... or default to 'bigquery'
-        let system = 'bigquery';
-        if (resource.includes('//')) {
-          const parts = resource.split('//')[1].split('.');
-          if (parts.length > 0 && parts[0] !== 'googleapis') {
-            system = parts[0];
-          }
+    useEffect(() => {
+        console.log('num', number);
+        // Reset loader when loading new data product
+        if(dataProductAssetsStatus === 'loading'){
+            setAssetListLoader(false);
+            return;
+        }
+        // Handle failed state (API returns error when no assets)
+        if(dataProductAssetsStatus === 'failed'){
+            setDataProductsAssetsList([]);
+            setAssetListLoader(true);
+            return;
+        }
+        if(dataProductAssetsStatus !== 'succeeded') return;
+        if(dataProductAssets.length === 0){
+            setDataProductsAssetsList([]);
+            setAssetListLoader(true);
+            return;
         }
 
-        const projectsPart = resource.split('projects/')[1];
-        if (!projectsPart) return '';
-
-        const parts = projectsPart.split('/');
-        // Format: project.dataset[.table]
-        // parts[0]: project, parts[2]: dataset, parts[4]: table (if available)
-        let p = '';
-        if (parts.length >= 5) {
-          p = `${parts[0]}.${parts[2]}.${parts[4]}`;
-        } else if (parts.length >= 3) {
-          p = `${parts[0]}.${parts[2]}`;
-        } else {
-          p = parts[0];
-        }
-
-        return system + ':' + p;
-      }).filter(Boolean);
-
-      if (a.length === 0) {
-        setDataProductsAssetsList([]);
-        setAssetListLoader(true);
-        return;
-      }
-
-      // Extract project ID and location from the entry name (e.g., projects/{proj}/locations/{loc}/...)
-      const entryParts = entry?.name?.split('/') || [];
-      const projectIndex = entryParts.indexOf('projects');
-      const locationIndex = entryParts.indexOf('locations');
-      const projectId = projectIndex !== -1 ? entryParts[projectIndex + 1] : import.meta.env.VITE_GOOGLE_PROJECT_ID;
-      const location = locationIndex !== -1 ? entryParts[locationIndex + 1] : 'global';
-
-      console.log('[Assets] Using project:', projectId, 'location:', location);
-
-      let searchTerm = 'fully_qualified_name=(' + a.join(' | ');
-      searchTerm += ')';
-      const requestResourceData = {
-        query: searchTerm,
-      }
-      axios.post(
-        `https://dataplex.googleapis.com/v1/projects/${projectId}/locations/${location}:searchEntries`,
-        requestResourceData,
-        {
-          headers: {
-            Authorization: `Bearer ${user?.token}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      ).then((response: any) => {
-        console.log('fet Ass', response.data);
-        //response.data.results.map()
-        setDataProductsAssetsList(response.data.results || []);
-        setAssetListLoader(true);
-      }).catch((error: any) => {
-        console.error('Error fetching data product assets details:', error);
-        // Try with 'global' location as fallback
-        if (location !== 'global') {
-          console.log('[Assets] Retrying with global location...');
-          axios.post(
-            `https://dataplex.googleapis.com/v1/projects/${projectId}/locations/global:searchEntries`,
-            requestResourceData,
-            {
-              headers: {
-                Authorization: `Bearer ${user?.token}`,
-                'Content-Type': 'application/json',
-              },
+        if(dataProductAssetsStatus === 'succeeded' && dataProductAssets.length > 0){
+            let a = dataProductAssets.map((item: any) => {
+                let p = item.resource.split('projects/')[1].split('/').length == 5 ?
+                    `${item.resource.split('projects/')[1].split('/')[0]}.${item.resource.split('projects/')[1].split('/')[2]}.${item.resource.split('projects/')[1].split('/')[4]}`:
+                    `${item.resource.split('projects/')[1].split('/')[0]}.${item.resource.split('projects/')[1].split('/')[2]}`;
+                let b = item.resource.includes('//') ? item.resource.split('projects/')[0].split('.')[0].slice(2) : 'bigquery';
+                return b + ':' + p;
+            });
+            let searchTerm = 'fully_qualified_name=(' + a.join(' | ');
+            searchTerm += ')';
+            const requestResourceData = {
+                query: searchTerm,
             }
-          ).then((response: any) => {
-            console.log('[Assets] Fallback succeeded:', response.data);
-            setDataProductsAssetsList(response.data.results || []);
-            setAssetListLoader(true);
-          }).catch((err: any) => {
-            console.error('[Assets] Fallback also failed:', err);
-            setAssetListLoader(true);
-          });
-        } else {
-          setAssetListLoader(true);
+            axios.post(
+            `https://dataplex.googleapis.com/v1/projects/${import.meta.env.VITE_GOOGLE_PROJECT_ID}/locations/global:searchEntries`,
+                requestResourceData,
+                {
+                    headers: {
+                    Authorization: `Bearer ${user?.token}`,
+                    'Content-Type': 'application/json',
+                    },
+                }
+            ).then((response:any) => {
+                console.log('fet Ass', response.data);
+                //response.data.results.map()
+                setDataProductsAssetsList(response.data.results);
+                console.log(dataProductsAssetsList);
+                setTimeout(() => {
+                  setAssetListLoader(true);
+                }, 300)
+                
+            }).catch((error:any) => {
+                console.error('Error fetching data product assets details:', error);
+            });
         }
-      });
-    }
-  }, [dataProductAssets, entry?.name]);
+    }, [dataProductAssets, dataProductAssetsStatus]);
 
 
-  // useEffect(() => {
-  //     if (entry?.name ==='projects/data-studio-459108/locations/us-central1/entryGroups/@dataplex/entries/projects/1069578231809/locations/us-central1/dataProducts/acme-shopstream-sales-performance') {
-  //         setDataProductsAssetsList(acmeAssetsSampleData);
-  //     }else if (entry?.name ==='projects/data-studio-459108/locations/us-central1/entryGroups/@dataplex/entries/projects/1069578231809/locations/us-central1/dataProducts/cymbal-customer-experience-and-retention') {
-  //         setDataProductsAssetsList(cymbalAssetsSampleData);
-  //     } else {
-  //         setDataProductsAssetsList([]);
-  //     }
-  // }, [dataProductAssets]);
+    // useEffect(() => {
+    //     if (entry?.name ==='projects/data-studio-459108/locations/us-central1/entryGroups/@dataplex/entries/projects/1069578231809/locations/us-central1/dataProducts/acme-shopstream-sales-performance') {
+    //         setDataProductsAssetsList(acmeAssetsSampleData);
+    //     }else if (entry?.name ==='projects/data-studio-459108/locations/us-central1/entryGroups/@dataplex/entries/projects/1069578231809/locations/us-central1/dataProducts/cymbal-customer-experience-and-retention') {
+    //         setDataProductsAssetsList(cymbalAssetsSampleData);
+    //     } else {
+    //         setDataProductsAssetsList([]);
+    //     }
+    // }, [dataProductAssets]);
 
-  //sorting handlers
-  // const handleSortMenuClick = (event: React.MouseEvent<HTMLElement>) => {
-  //     setSortAnchorEl(event.currentTarget);
-  // };
+    //sorting handlers
+    // const handleSortMenuClick = (event: React.MouseEvent<HTMLElement>) => {
+    //     setSortAnchorEl(event.currentTarget);
+    // };
+    
+    // const handleSortMenuClose = () => {
+    //     setSortAnchorEl(null);
+    // };
+    
+    // const handleSortOptionSelect = (option: 'name' | 'lastModified') => {
+    //     setSortBy(option);
+    //     //setSortOrder(prevOrder => prevOrder === 'asc' ? 'desc' : 'asc');
+    //     setDataProductsAssetsList(dataProductsAssetsList);
+    //     handleSortMenuClose();
+    // };
 
-  // const handleSortMenuClose = () => {
-  //     setSortAnchorEl(null);
-  // };
-
-  // const handleSortOptionSelect = (option: 'name' | 'lastModified') => {
-  //     setSortBy(option);
-  //     //setSortOrder(prevOrder => prevOrder === 'asc' ? 'desc' : 'asc');
-  //     setDataProductsAssetsList(dataProductsAssetsList);
-  //     handleSortMenuClose();
-  // };
-
-  // const sortItems = (items: any[]) => {
-  //     return [...items].sort((a, b) => {
-  //     if (sortBy === 'name') {
-  //         const nameA = a.displayName.toLowerCase();
-  //         const nameB = b.displayName.toLowerCase();
-  //         if (sortOrder === 'asc') return nameA.localeCompare(nameB);
-  //         return nameB.localeCompare(nameA);
-  //     } else {
-  //         // Last Modified (Number)
-  //         const dateA = a.updateTime || 0;
-  //         const dateB = b.updateTime || 0;
-  //         if (sortOrder === 'asc') return dateA - dateB; // Oldest first
-  //         return dateB - dateA; // Newest first
-  //     }
-  //     });
-  // };
+    // const sortItems = (items: any[]) => {
+    //     return [...items].sort((a, b) => {
+    //     if (sortBy === 'name') {
+    //         const nameA = a.displayName.toLowerCase();
+    //         const nameB = b.displayName.toLowerCase();
+    //         if (sortOrder === 'asc') return nameA.localeCompare(nameB);
+    //         return nameB.localeCompare(nameA);
+    //     } else {
+    //         // Last Modified (Number)
+    //         const dateA = a.updateTime || 0;
+    //         const dateB = b.updateTime || 0;
+    //         if (sortOrder === 'asc') return dateA - dateB; // Oldest first
+    //         return dateB - dateA; // Newest first
+    //     }
+    //     });
+    // };
 
 
 
   return (
-    <div>
+    <div> 
       <Paper
-        elevation={0}
-        sx={{
+        elevation={0} 
+        sx={{ 
           flex: 1,
-          borderRadius: '24px',
-          backgroundColor: '#fff',
+          borderRadius: '24px', 
+          backgroundColor: '#fff', 
           border: 'transparent',
-          display: 'flex',
-          flexDirection: 'column',
+          display: 'flex', 
+          flexDirection: 'column', 
           overflow: 'hidden',
           position: 'relative'
         }}
-        style={{ ...css }}
+        style={{...css}}
       >
-        <Box
+        <Box 
         >
-          {/* <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.1, position: 'relative', top: '40px', left: '20px' }}>
+            {/* <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.1, position: 'relative', top: '40px', left: '20px' }}>
                 <TextField
                     size="small"
                     variant="outlined"
@@ -457,78 +409,83 @@ const Assets: React.FC<AssetsProps> = ({ entry, css, onAssetPreviewChange }) => 
             </Box> */}
 
 
-          <Box sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            padding: ' 0px 20px',
-            height: 'calc(100vh - 200px)',
-            overflowY: 'auto'
-          }}>
-            {
-              !assetListLoader && (
-                <Box sx={{ marginTop: '1.25rem' }}>
-                  <Skeleton variant="rectangular" width="100%" height={40} sx={{ marginBottom: '10px', borderRadius: '8px' }} />
-                  <Skeleton variant="rectangular" width="100%" height={40} sx={{ marginBottom: '10px', borderRadius: '8px' }} />
-                  <Skeleton variant="rectangular" width="100%" height={40} sx={{ marginBottom: '10px', borderRadius: '8px' }} />
-                  <Skeleton variant="rectangular" width="100%" height={40} sx={{ marginBottom: '10px', borderRadius: '8px' }} />
+            <Box sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                padding: ' 0px 20px',
+                height: '100%',
+                overflowY: 'visible'
+            }}>
+                {
+                    !assetListLoader && (
+                        <Box>
+                            {/* Header skeleton: Filter button + Search bar + controls */}
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: '20px', marginBottom: '16px' }}>
+                                <Skeleton variant="rounded" width={85} height={32} sx={{ borderRadius: '59px' }} />
+                                <Skeleton variant="rounded" width={309} height={32} sx={{ borderRadius: '54px' }} />
+                                <Box sx={{ flex: 1 }} />
+                                <Skeleton variant="rounded" width={64} height={32} sx={{ borderRadius: '8px' }} />
+                                <Skeleton variant="rounded" width={120} height={20} sx={{ borderRadius: '4px' }} />
+                            </Box>
+                            {/* Table skeleton */}
+                            <ShimmerLoader count={8} type="search-table" />
+                        </Box>
+                    )
+                }
+                {(dataProductAssetsStatus === 'succeeded' || dataProductAssetsStatus === 'failed') && dataProductAssets.length === 0 && assetListLoader && (
+                    <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 'calc(100vh - 300px)', width: '100%' }}>
+                        <Typography sx={{ fontSize: '14px', color: '#575757' }}>No data product assets found</Typography>
+                    </Box>
+                )}
+                {dataProductAssetsStatus === 'succeeded' && dataProductAssets.length > 0 && assetListLoader && (
+                    // dataProductsAssetsList.map((resource: any, index: number) => {
+                    //     console.log("Resource in Data Product Assets:", resource);
+                    //     //const isSelected = previewData && previewData.name === resource.dataplexEntry.name;
+                    //     //const disableHoverEffect = selectedIndex !== -1 && selectedIndex === index - 1;
+                    //     //const hideTopBorder = hoveredIndex === index - 1;
+                    //     return (
+                    //         <Box
+                    //         key={resource.dataplexEntry.name}
+                    //         onClick={() => {}}
+                    //         onMouseEnter={() => {}}
+                    //         onMouseLeave={() => {}}
+                    //         sx={{
+                    //             backgroundColor: '#ffffff',
+                    //             cursor: 'pointer',
+                    //             borderRadius: '8px',
+                    //             padding: '0px',
+                    //             marginLeft: '-0.5rem'
+                    //         }}
+                    //         >
+                    //                 <SearchEntriesCard
+                    //                     index={index}
+                    //                     entry={resource.dataplexEntry}
+                    //                     hideTopBorderOnHover={true}
+                    //                     sx={{ backgroundColor: 'transparent', borderRadius: true ? '8px' : '0px', marginTop: false ? '-1px' : '0px',  marginBottom: false ? '-2px' : '10px', border: '1px solid #efefef' }}
+                    //                     isSelected={false}
+                    //                     onDoubleClick={() => {}}
+                    //                     disableHoverEffect={true}
+                    //                 />
+                    //                 </Box>
+                    //             );
+                    // })
+                    <Box>
+                        <DataProductAssets
+                        linkedAssets={dataProductsAssetsList || []}
+                        searchTerm={searchTerm}
+                        onSearchTermChange={setSearchTerm}
+                        idToken={id_token || ''}
+                        onAssetPreviewChange={(data) => {
+                            onAssetPreviewChange && onAssetPreviewChange(data);
+                        }}
+                        />
+                    </Box>
+                )}  
                 </Box>
-              )
-            }
-            {dataProductAssetsStatus === 'loading' && (
-              <Typography sx={{ fontSize: '14px', color: '#575757', marginTop: 40 }}>Loading data product assets...</Typography>
-            )}
-            {dataProductAssetsStatus === 'succeeded' && dataProductAssets.length === 0 && assetListLoader && (
-              <Typography sx={{ fontSize: '14px', color: '#575757', marginTop: 40 }}>No data product assets found.</Typography>
-            )}
-            {dataProductAssetsStatus === 'succeeded' && dataProductAssets.length > 0 && assetListLoader && (
-              // dataProductsAssetsList.map((resource: any, index: number) => {
-              //     console.log("Resource in Data Product Assets:", resource);
-              //     //const isSelected = previewData && previewData.name === resource.dataplexEntry.name;
-              //     //const disableHoverEffect = selectedIndex !== -1 && selectedIndex === index - 1;
-              //     //const hideTopBorder = hoveredIndex === index - 1;
-              //     return (
-              //         <Box
-              //         key={resource.dataplexEntry.name}
-              //         onClick={() => {}}
-              //         onMouseEnter={() => {}}
-              //         onMouseLeave={() => {}}
-              //         sx={{
-              //             backgroundColor: '#ffffff',
-              //             cursor: 'pointer',
-              //             borderRadius: '8px',
-              //             padding: '0px',
-              //             marginLeft: '-0.5rem'
-              //         }}
-              //         >
-              //                 <SearchEntriesCard
-              //                     index={index}
-              //                     entry={resource.dataplexEntry}
-              //                     hideTopBorderOnHover={true}
-              //                     sx={{ backgroundColor: 'transparent', borderRadius: true ? '8px' : '0px', marginTop: false ? '-1px' : '0px',  marginBottom: false ? '-2px' : '10px', border: '1px solid #efefef' }}
-              //                     isSelected={false}
-              //                     onDoubleClick={() => {}}
-              //                     disableHoverEffect={true}
-              //                 />
-              //                 </Box>
-              //             );
-              // })
-              <Box sx={{ marginTop: '1.25rem' }}>
-                <DataProductAssets
-                  linkedAssets={dataProductsAssetsList || []}
-                  searchTerm={searchTerm}
-                  onSearchTermChange={setSearchTerm}
-                  idToken={id_token || ''}
-                  onAssetPreviewChange={(data) => {
-                    onAssetPreviewChange && onAssetPreviewChange(data);
-                  }}
-                />
-              </Box>
-            )}
-          </Box>
         </Box>
-      </Paper>
-    </div>
-
+        </Paper>
+        </div>
+    
   );
 }
 

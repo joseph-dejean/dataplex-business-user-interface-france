@@ -7,7 +7,7 @@ interface RootState {
     token?: string;
   };
 }
-import Login from '../component/Auth/Login/Login';
+import Login from '../component/Auth/Login/LoginV2';
 import Layout from '../component/Layout/Layout';
 import Home from '../component/Home/Home';
 import { useSelector } from 'react-redux';
@@ -30,8 +30,6 @@ import DataProductsDetailView from '../component/DataProducts/DataProductsDetail
 import AccessRequestsDashboard from '../component/AccessRequests/AccessRequestsDashboard';
 import AdminAccessManagement from '../component/AdminPanel/AdminAccessManagement';
 import GlobalChatPage from '../component/GlobalChat/GlobalChatPage';
-import Settings from '../component/Settings/Settings';
-
 const Routing = () => {
   // state to hold the user object
   // and a function to update it
@@ -308,18 +306,6 @@ const Routing = () => {
             <SessionExpirationWrapper>
               <Layout searchBar={true}>
                 <DataProductPage />
-              </Layout>
-            </SessionExpirationWrapper>
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/settings"
-        element={
-          <ProtectedRoute>
-            <SessionExpirationWrapper>
-              <Layout searchBar={true}>
-                <Settings />
               </Layout>
             </SessionExpirationWrapper>
           </ProtectedRoute>

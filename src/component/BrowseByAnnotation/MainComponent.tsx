@@ -1,690 +1,725 @@
 import React, { useEffect, useState } from 'react';
-import { 
-  Box, 
-  Typography, 
-  Card, 
-  CardContent,
-  Select,
-  MenuItem,
-  FormControl,
-  Avatar,
-  CircularProgress
+import {
+  Box,
+  Typography,
+  Tabs,
+  Tab,
+  Paper,
+  Skeleton,
+  Tooltip,
 } from '@mui/material';
-import { Grid } from '@mui/material';
-import { ArrowBack } from '@mui/icons-material';
+import { ArrowBack, KeyboardArrowUp, KeyboardArrowDown, Close, FormatListBulleted } from '@mui/icons-material';
+import IconButton from '@mui/material/IconButton';
 import { useNavigate } from 'react-router-dom';
-import type { AppDispatch } from '../../app/store';
-import { browseResourcesByAspects } from '../../features/resources/resourcesSlice';
+import type { AppDispatch, RootState } from '../../app/store';
+import { browseResourcesByAspects, setItems, setItemsStatus } from '../../features/resources/resourcesSlice';
 import { useDispatch, useSelector } from 'react-redux';
-import ResourceViewer from '../Common/ResourceViewer';
 import ResourcePreview from '../Common/ResourcePreview';
-import { typeAliases } from '../../utils/resourceUtils';
+import DetailPageOverview from '../DetailPageOverview/DetailPageOverview';
+import AnnotationPageSkeleton from './AnnotationPageSkeleton';
+import SubTypesTab from './SubTypesTab';
+import SubTypesTabSkeleton from './SubTypesTabSkeleton';
+import SubTypeHeaderSkeleton from './SubTypeHeaderSkeleton';
+import AspectLinkedAssets from './AspectLinkedAssets';
+import AnnotationsIconBlue from '../../assets/svg/annotations-icon-blue.svg';
+import AnnotationSubitemIcon from '../../assets/svg/annotation-subitem.svg';
+import ThemedIconContainer from '../Common/ThemedIconContainer';
 
 /**
  * @file MainComponent.tsx
  * @summary Renders the main content panel for the "Browse by Aspect" (Annotation) page.
  *
  * @description
- * This component is responsible for displaying the hierarchical content of the
- * "Browse by Aspect" feature. Its UI changes based on user selection,
- * progressing through three distinct levels, which are controlled by the `selectedCard`
- * and `selectedSubItem` props.
+ * This component displays a tab-based view for the selected aspect with two tabs:
+ * - Overview: Shows aspect details using DetailPageOverview component
+ * - Sub Types: Shows a grid of sub-type cards with asset counts
  *
- * 1.  **Main View (`selectedCard` is null):** Renders `renderMainView`. This
- * displays a grid of top-level aspect categories (from `annotationsData`).
- * Clicking a category card invokes the `onItemClick` callback.
- *
- * 2.  **Detail View (`selectedCard` is set, `selectedSubItem` is null):**
- * Renders `renderCardDetailView`. This displays a "Back" button and a grid
- * of sub-items (e.g., specific fields) for the selected aspect. This view
- * includes sorting options (Relevance, Name, Assets). Clicking a sub-item
- * card invokes the `onSubItemClick` callback.
- *
- * 3.  **Resource View (`selectedSubItem` is set):** Renders `renderSubItemView`.
- * This view is the final level, displaying the actual data assets (resources)
- * that match the selected aspect and sub-item. It uses the `ResourceViewer`
- * component to show a paginated list of results. This view also manages a
- * two-column layout, showing a `ResourcePreview` panel when an asset is
- * clicked.
- *
- * The component is responsible for dispatching the `browseResourcesByAspects`
- * Redux action to fetch the list of resources when a sub-item is selected.
- * It also manages all pagination state and logic for the `ResourceViewer`.
- *
- * @param {object} props - The props for the MainComponent.
- * (Note: The interface is named `SideNavProps` in the file).
- *
- * @param {any} props.selectedCard - The currently selected top-level aspect
- * category object, passed from the parent.
- * @param {function} props.onItemClick - Callback function to update the
- * parent's `selectedCard` state (e.g., on-click or 'Back' press).
- * @param {any} props.selectedSubItem - The currently selected sub-item object,
- * passed from the parent.
- * @param {function} props.onSubItemClick - Callback function to update the
- * parent's `selectedSubItem` state.
- * @param {any[]} props.annotationsData - An array of all top-level aspect
- * category objects to display in the main view.
- *
- * @returns {JSX.Element} The rendered React component, which conditionally
- * displays one of the three hierarchical views.
+ * When a sub-type is clicked, it navigates to the ResourceViewer to show
+ * the filtered resources for that sub-type.
  */
 
-interface SideNavProps {
-  selectedCard:any;
-  onItemClick: any | (() => void);
+interface MainComponentProps {
+  selectedCard: any;
+  onItemClick: (item: any) => void;
   selectedSubItem: any;
-  onSubItemClick: any | (() => void);
+  onSubItemClick: (subItem: any) => void;
   annotationsData: any[];
+  tabValue: number;
+  onTabChange: (event: React.SyntheticEvent, newValue: number) => void;
+  contentSearchTerm: string;
+  onContentSearchTermChange: (value: string) => void;
+  sortBy: 'name' | 'assets' | 'type';
+  onSortByChange: (value: 'name' | 'assets' | 'type') => void;
+  sortOrder: 'asc' | 'desc';
+  onSortOrderToggle: () => void;
+  loadingAspectName?: string | null;
+  subTypesWithCache: Record<string, boolean>;
+  isSidebarOpen?: boolean;
+  onSidebarToggle?: (open: boolean) => void;
+  isSmallScreen?: boolean;
 }
 
-const MainComponent: React.FC<SideNavProps> = ({ selectedCard, onItemClick, selectedSubItem, onSubItemClick, annotationsData}) => {
-
-  // Function to generate consistent colors based on text
-  const generateAvatarColor = (text: string) => {
-    const colors = [
-      { bg: '#E3F2FD', text: '#1565C0' }, // Light Blue
-      { bg: '#F3E5F5', text: '#7B1FA2' }, // Light Purple
-      { bg: '#E8F5E8', text: '#2E7D32' }, // Light Green
-      { bg: '#FFF3E0', text: '#F57C00' }, // Light Orange
-      { bg: '#FCE4EC', text: '#C2185B' }, // Light Pink
-      { bg: '#E0F2F1', text: '#00695C' }, // Light Teal
-      { bg: '#F1F8E9', text: '#558B2F' }, // Light Lime
-      { bg: '#FFF8E1', text: '#F9A825' }, // Light Yellow
-      { bg: '#FFEBEE', text: '#D32F2F' }, // Light Red
-      { bg: '#E8EAF6', text: '#303F9F' }, // Light Indigo
-    ];
-    
-    // Simple hash function to get consistent color for same text
-    let hash = 0;
-    for (let i = 0; i < text.length; i++) {
-      const char = text.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32-bit integer
-    }
-    
-    return colors[Math.abs(hash) % colors.length];
-  };
-
-  // Function to get first letter of title
-  const getFirstLetter = (title: string) => {
-    return title.charAt(0).toUpperCase();
-  };
+const MainComponent: React.FC<MainComponentProps> = ({
+  selectedCard,
+  selectedSubItem,
+  onSubItemClick,
+  tabValue,
+  onTabChange,
+  contentSearchTerm,
+  onContentSearchTermChange,
+  sortBy,
+  onSortByChange,
+  sortOrder,
+  onSortOrderToggle,
+  loadingAspectName = null,
+  subTypesWithCache,
+  isSidebarOpen = true,
+  onSidebarToggle,
+  isSmallScreen = false,
+}) => {
 
   const dispatch = useDispatch<AppDispatch>();
   const navigate = useNavigate();
   const id_token = useSelector((state:any) => state.user.token);
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
 
-  //const [selectedCard, setSelectedCard] = useState<any | null>(null);
-  const [sortBy, setSortBy] = useState('relevance');
+  // ResourceViewer state
   const resources = useSelector((state: any) => state.resources.items);
   const resourcesStatus = useSelector((state: any) => state.resources.status);
-  const error = useSelector((state: any) => state.resources.error);
   const [previewData, setPreviewData] = useState<any | null>(null);
-  const [selectedTypeFilter, setSelectedTypeFilter] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<'list' | 'table'>('list');
   const [isPreviewOpen, setIsPreviewOpen] = useState<boolean>(false);
-  const [startIndex, setStartIndex] = useState<number>(0);
-  const [pageSize, setPageSize] = useState<number>(20);
-  const [pageNumber, setPageNumber] = useState<number>(1);
+  const [linkedAssetsSearchTerm, setLinkedAssetsSearchTerm] = useState<string>('');
+  const [subItemDescExpanded, setSubItemDescExpanded] = useState(false);
 
+  // Access Redux cache
+  const aspectBrowseCache = useSelector((state: RootState) => state.resources.aspectBrowseCache);
+
+  // Cache key generator helper
+  const generateCacheKey = (aspectTitle: string, subTypeName: string) => {
+    return `${aspectTitle}__${subTypeName}`;
+  };
+
+  // Fetch resources when sub-item is selected
   useEffect(() => {
-    // Only search if there's a search term and no existing results
-    //if (resources.length === 0) {
-      //setPageSize(20);
-      setPageNumber(1);
-      setStartIndex(0);
-      // Clear previous search results in the store
-      dispatch({ type: 'resources/setItemsPreviousPageRequest', payload: null });
-      dispatch({ type: 'resources/setItemsPageRequest', payload: null });
-      dispatch({ type: 'resources/setItemsStoreData', payload: [] });   
-    //}
-  }, []);
+    if (selectedCard && selectedSubItem) {
+      // Check if data is already cached
+      const cacheKey = generateCacheKey(selectedCard.title, selectedSubItem.title);
+      const cachedData = aspectBrowseCache[cacheKey];
 
-  useEffect(() => {
-    if(resourcesStatus === 'succeeded' || resourcesStatus === 'failed'){
-      dispatch({ type: 'resources/setItemsNextPageSize', payload: null });
-    }
-  }, [resourcesStatus]);
-
-  // Pagination state
-  const resourcesTotalSize = useSelector((state: any) => state.resources.totalItems);
-  const resourcesRequestData = useSelector((state: any) => state.resources.itemsRequestData);
-  const requestItemStore = useSelector((state: any) => state.resources.itemsStore);
-  
-  // Pagination handler
-    const handlePagination = (direction: 'next' | 'previous', size: number, sizeChange:boolean = false) => {
-      if (!resourcesRequestData) return;
-      let requestResourceData = { ...resourcesRequestData };
-      if (sizeChange){
-        setStartIndex(0);
-        setPageNumber(1);
-        setPageSize(size);
+      if (cachedData && subTypesWithCache[cacheKey]) {
+        // Use cached data - set directly without API call
+        dispatch(setItems(cachedData.data));
+        dispatch(setItemsStatus('succeeded'));
+        // Don't clear preview when using cache for better UX
+      } else {
+        // Fetch fresh data
+        dispatch({ type: 'resources/setItemsPreviousPageRequest', payload: null });
+        dispatch({ type: 'resources/setItemsPageRequest', payload: null });
+        dispatch({ type: 'resources/setItemsStoreData', payload: [] });
+        dispatch(browseResourcesByAspects({term : '', id_token: id_token, annotationName : selectedCard.title, subAnnotationName: selectedSubItem.title || null}));
+        setIsPreviewOpen(false);
       }
-  
-      if (direction === 'next') {
-        if (requestItemStore.length > 0){
-          console.log("page number", pageNumber);
-          const start = sizeChange ? 0 : size * pageNumber;
-          setPageNumber(pageNumber + 1);
-          setStartIndex(start);
-          const paginatedItems = start + size <= requestItemStore.length 
-          ? requestItemStore.slice(start, start + size) : requestItemStore.slice(start);
-          console.log(requestItemStore);
-          if(paginatedItems.length === size || ((start + size) >= resourcesTotalSize && requestItemStore.length === resourcesTotalSize)){
-            dispatch({ type: 'resources/setItemsStatus', payload: 'loading' });
-            dispatch({ type: 'resources/setItems', payload: paginatedItems });
-          }else if(requestResourceData != null){
-            requestResourceData.pageSize = (start + size) - requestItemStore.length;
-            console.log("r", requestItemStore);
-            dispatch({ type: 'resources/setItemsNextPageSize', payload: size });
-            dispatch(browseResourcesByAspects({ requestResourceData: requestResourceData, id_token: id_token }));
-          }else{
-            console.log('data loaded');
+    }
+  }, [selectedCard, selectedSubItem, dispatch, id_token, aspectBrowseCache, subTypesWithCache]);
+
+  // Reset description expanded state when selected card changes
+  useEffect(() => {
+    setDescriptionExpanded(false);
+  }, [selectedCard?.name]);
+
+  // Reset sub-item description expanded state when sub-item changes
+  useEffect(() => {
+    setSubItemDescExpanded(false);
+  }, [selectedSubItem?.title]);
+
+
+  const handleBackClick = () => {
+    if (selectedSubItem) {
+      onSubItemClick(null); // Clear selected subItem, return to tabs view
+    } else {
+      navigate('/home');
+    }
+  };
+
+  const handleSubTypeClick = (subItem: any) => {
+    onSubItemClick(subItem);
+    setIsPreviewOpen(false);
+  };
+
+  // Transform annotation data to entry format for DetailPageOverview
+  const transformAnnotationToEntry = (item: any) => {
+    if (!item) return null;
+    return {
+      name: item.name,
+      entryType: `annotation/${item.title}`,
+      fullyQualifiedName: item.fullyQualifiedName || item.resource || item.name,
+      createTime: item.createTime,
+      updateTime: item.updateTime,
+      entrySource: {
+        description: item.description || '',
+        displayName: item.title,
+        location: item.location || '',
+        system: item.system || '',
+        resource: item.resource || '',
+        labels: item.labels || {}
+      },
+      aspects: {
+        [`${item.title}.global.overview`]: {
+          data: {
+            fields: {
+              content: {
+                stringValue: 'No Documentation Available',
+                kind: 'stringValue'
+              }
+            }
           }
-        }
-      } else if (direction === 'previous') {
-        if (requestItemStore.length > 0){
-          dispatch({ type: 'resources/setItemsStatus', payload: 'loading' });
-          const start = sizeChange ? 0 : Math.max(0, size * (pageNumber - 2));
-          setPageNumber(Math.max(1, pageNumber - 1));
-          setStartIndex(start);
-          const paginatedItems = requestItemStore.slice(start, start + size);
-          dispatch({ type: 'resources/setItems', payload: paginatedItems });
         }
       }
     };
-
-  useEffect(() => {
-    if (selectedCard && selectedSubItem) {
-      console.log(`Selected Card:`, selectedCard);
-      console.log(`Selected SubItem:`, selectedSubItem);
-      dispatch({ type: 'resources/setItemsPreviousPageRequest', payload: null });
-      dispatch({ type: 'resources/setItemsPageRequest', payload: null });
-      dispatch({ type: 'resources/setItemsStoreData', payload: [] });
-      dispatch(browseResourcesByAspects({term : '', id_token: id_token, annotationName : selectedCard.title, subAnnotationName: selectedSubItem.title || null}));
-    }else if(selectedCard){
-      dispatch(browseResourcesByAspects({term : '', id_token: id_token, annotationName : selectedCard.title, subAnnotationName: selectedSubItem?.title || null}));
-    }
-    setIsPreviewOpen(false);
-  }, [selectedCard, selectedSubItem]);
-
-
-  
-
-  const handleCardClick = (cardData: any) => {
-    onItemClick(cardData);
   };
 
-  const handleBackClick = () => {
-    onItemClick(selectedSubItem ? selectedCard : null);
-    onSubItemClick(null); // Clear selected subItem when going back
-  };
-
-  const handleSortChange = (event:any) => {
-    setSortBy(event.target.value as string);
-  };
-
-  const handleSubItemClick = (subItem:any) => {
-    dispatch(browseResourcesByAspects({term : '', id_token: id_token, annotationName : selectedCard.title, subAnnotationName: subItem.title || null}));
-    onSubItemClick(subItem);
-    setIsPreviewOpen(false); // Close preview when selecting a new subItem
-  };
-
-  const getSortedSubTypes = (subItems:any) => {
-    switch (sortBy) {
-      case 'name':
-        return [...subItems].sort((a, b) => a.title.localeCompare(b.title));
-      case 'assets':
-        return [...subItems].sort((a, b) => b.assets - a.assets);
-      case 'relevance':
-      default:
-        return subItems; 
-    }
-  };
-
-
-  let renderMainView = (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column'}}>
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          marginBottom: '24px',
-        }}
-      >
-        <ArrowBack
-          onClick={() => navigate('/home')}
-          sx={{
-            marginRight: 1,
-            color: '#0B57D0',
-            cursor: 'pointer',
-          }}
-        />
-        <Typography
-          variant="h6"
-          sx={{
-            fontWeight: 500,
-            fontSize: '1rem',
-            color: '#1F1F1F',
-          }}
-        >
-          Browse
-        </Typography>
-      </Box>
-      
-      <Box sx={{ flex: 1, overflowY: 'auto' }}>
-        <Grid container spacing={2}>
-          {annotationsData.map((item, index) => (
-            <Grid key={index}>
-              <Card
-                onClick={() => handleCardClick(item)}
-                sx={{
-                  width: '270px',
-                  height: '72px', // Changed from 65px
-                  cursor: 'pointer',
-                  borderRadius: '16px',
-                  border: '1px solid var(--Text-Tertiary, #DADCE0)',
-                  backgroundColor: '#ffffff',
-                  boxShadow: 'none',
-                  display: 'flex',
-                  alignItems: 'center',
-                  '&:hover': {
-                    backgroundColor: '#F8FAFD',
-                    border: '1px solid #E7F0FE',
-                  },
-                }}
-              >
-                <CardContent
-                  sx={{
-                    marginTop: '8.5px',
-                    marginLeft: '-2px',
-                    padding: '16px',
-                    width: '100%',
-                    height: '100%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '12px',
-                  }}
-                >
-                  <Avatar
-                    sx={{
-                      width: 40,
-                      height: 40,
-                      backgroundColor: generateAvatarColor(item.title).bg,
-                      color: generateAvatarColor(item.title).text,
-                      fontSize: '16px',
-                      fontWeight: 600,
-                      fontFamily: 'Google Sans Text, sans-serif',
-                      flexShrink: 0,
-                      borderRadius: '8px'
-                    }}
-                  >
-                    {getFirstLetter(item.title)}
-                  </Avatar>
-                  <Box 
-                    sx={{ 
-                      flex: 1,
-                      minWidth: 0,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      justifyContent: 'center',
-                      gap: '2px',
-                    }}
-                  >
-                    <Typography
-                      variant="h6"
-                      sx={{
-                        fontFamily: 'Google Sans Text, sans-serif',
-                        fontWeight: 500,
-                        fontSize: '14px',
-                        lineHeight: '20px',
-                        color: '#1F1F1F',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {item.title}
-                    </Typography>
-                    <Typography
-                      sx={{
-                        fontFamily: 'Google Sans Text, sans-serif',
-                        fontWeight: 400,
-                        fontSize: '12px',
-                        lineHeight: '16px',
-                        color: '#666666',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 0.5,
-                      }}
-                    >
-                      {`${item.fieldValues} Sub Type${item.fieldValues > 1 ? 's' : ''}`}
-                      {/* <span style={{ color: '#666666', margin: '0 4px' }}>•</span>
-                      {item.assets} Assets */}
-                    </Typography>
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
-          ))}
-        </Grid>
-      </Box>
-    </Box>
-  );
-
-  const renderCardDetailView = () => (
-    <>
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'center'
-        }}
-      >
-        <ArrowBack
-          onClick={handleBackClick}
-          sx={{
-            marginRight: 1,
-            color: '#0B57D0',
-            cursor: 'pointer',
-          }}
-        />
-        <Typography
-          variant="h6"
-          sx={{
-            fontWeight: 500,
-            fontSize: '18px',
-            color: '#1F1F1F',
-          }}
-        >
-          {selectedCard.title}
-        </Typography>
-      </Box>
-
-      {/* Horizontal Filter Bar */}
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          backgroundColor: '#ffffff',
-          padding: '2px 2px',
-          gap: '8px',
-          marginBottom: 2
-        }}
-      >
-        <Typography
-          sx={{
-            fontFamily: 'Google Sans Text, sans-serif',
-            fontWeight: 500,
-            fontSize: '12px',
-            color: '#1F1F1F',
-          }}
-        >
-          {selectedCard.subItems.length} Sub types
-        </Typography>
-        
+  // Custom header for ResourceViewer (when viewing sub-item resources)
+  const subItemDescription = selectedSubItem?.description || '';
+  const resourceViewerHeader =
+    resourcesStatus === 'loading' ? (
+      <SubTypeHeaderSkeleton />
+    ) : (
+      <Box sx={{ flexShrink: 0 }}>
         <Box
           sx={{
-            width: '1px',
-            height: '20px',
-            backgroundColor: '#E1E5E9',
-          }}
-        />
-        
-        <Typography
-          sx={{
-            fontFamily: 'Google Sans Text, sans-serif',
-            fontWeight: 500,
-            fontStyle: 'normal',
-            fontSize: '12px', // Static/Body Small/Size
-            lineHeight: '16px', // Static/Body Small/Line Height
-            letterSpacing: '0.4px', // Static/Body Small/Tracking
-            verticalAlign: 'middle',
-            color: '#1F1F1F',
-            marginRight: '-15px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '20px',
+            padding: '20px 20px 0px',
           }}
         >
-          Sort by:
-        </Typography>
-        
-        <FormControl size="small" sx={{ minWidth: 60 }}>
-          <Select
-            value={sortBy}
-            onChange={handleSortChange}
-            sx={{
-              '& .MuiOutlinedInput-notchedOutline': {
-                border: 'none',
-              },
-              '& .MuiSelect-select': {
-                fontFamily: 'Google Sans Text, sans-serif',
+          <IconButton
+            sx={{ p: '4px', mr: 0.5, width: '40px', height: '40px', borderRadius: '50%', color: '#0B57D0', transition: 'background-color 0.2s', '&:hover': { backgroundColor: 'rgba(0, 0, 0, 0.04)' } }}
+            onClick={handleBackClick}
+          >
+            <ArrowBack style={{ fontSize: "24px" }} />
+          </IconButton>
+          <ThemedIconContainer iconColor="#F9AB00">
+            <img
+              src={AnnotationSubitemIcon}
+              alt=""
+              style={{ width: '24px', height: '24px' }}
+            />
+          </ThemedIconContainer>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
+              <Tooltip title={selectedSubItem?.displayName || selectedSubItem?.title || ''} arrow placement="top">
+                <label style={{
+                  fontFamily: '"Google Sans", sans-serif',
+                  color: '#1F1F1F',
+                  fontSize: '28px',
+                  fontWeight: '400',
+                  lineHeight: '36px',
+                  maxWidth: '500px',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}>
+                  {selectedSubItem?.displayName || selectedSubItem?.title}
+                </label>
+              </Tooltip>
+            </div>
+          </div>
+        </Box>
+        <div style={{ padding: '16px 20px 0px', maxWidth: '800px' }}>
+          {subItemDescription ? (
+            <>
+              <div style={{
+                fontFamily: '"Google Sans", sans-serif',
+                fontSize: '14px',
+                lineHeight: '20px',
+                color: '#575757',
+                fontWeight: 400,
+                maxHeight: subItemDescExpanded ? 'none' : '60px',
+                overflow: 'hidden',
+                position: 'relative',
+              }}>
+                {subItemDescription}
+              </div>
+              {subItemDescription.length > 200 && (
+                <button
+                  onClick={() => setSubItemDescExpanded(!subItemDescExpanded)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    padding: '6px 0px',
+                    color: '#0B57D0',
+                    fontFamily: '"Google Sans", sans-serif',
+                    fontSize: '14px',
+                    fontWeight: 500,
+                    lineHeight: '20px',
+                  }}
+                >
+                  {subItemDescExpanded ? <KeyboardArrowUp sx={{ fontSize: '20px' }} /> : <KeyboardArrowDown sx={{ fontSize: '20px' }} />}
+                  {subItemDescExpanded ? 'Show less' : 'Show more'}
+                </button>
+              )}
+            </>
+          ) : (
+            <div style={{
+              fontFamily: '"Google Sans", sans-serif',
+              fontSize: '14px',
+              lineHeight: '20px',
+              color: '#575757',
+              fontWeight: 400,
+              fontStyle: 'italic',
+            }}>
+              No description provided.
+            </div>
+          )}
+        </div>
+      </Box>
+    );
+
+  // If selectedSubItem is set, show Linked Assets view
+  if (selectedSubItem) {
+    return (
+      <Box
+        sx={{
+          display: 'flex',
+          height: 'calc(100vh - 80px)',
+          flex: 1,
+          backgroundColor: '#fff',
+        }}
+      >
+        <Paper
+          elevation={0}
+          sx={{
+            flex: 1,
+            height: '100%',
+            borderRadius: '0px',
+            backgroundColor: '#fff',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}
+        >
+          {/* Sections Toggle Button */}
+          <Box sx={{ padding: '12px 20px 0px' }}>
+            <span
+              style={{
+                boxSizing: 'border-box',
+                display: 'inline-flex',
+                flexDirection: 'row',
+                alignItems: 'center',
+                padding: '8px 13px',
+                gap: '8px',
+                height: '32px',
+                border: isSidebarOpen ? 'none' : '1px solid #0E4DCA',
+                borderRadius: '59px',
+                background: isSidebarOpen ? '#0E4DCA' : 'none',
+                color: isSidebarOpen ? '#EDF2FC' : '#0E4DCA',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const newState = !isSidebarOpen;
+                onSidebarToggle?.(newState);
+                if (isSmallScreen && newState) {
+                  setPreviewData(null);
+                  setIsPreviewOpen(false);
+                }
+              }}
+            >
+              {isSidebarOpen ? <Close style={{ width: '16px', height: '16px', flexShrink: 0 }} /> : <FormatListBulleted style={{ width: '16px', height: '16px', flexShrink: 0 }} />}
+              <span style={{
+                fontFamily: '"Google Sans", sans-serif',
                 fontWeight: 500,
                 fontSize: '12px',
-                color: '#1F1F1F',
-                padding: '8px 16px',
-                '&:focus': {
-                  backgroundColor: 'transparent',
+                lineHeight: '16px',
+                letterSpacing: '0.1px',
+                whiteSpace: 'nowrap',
+              }}>Sections</span>
+            </span>
+          </Box>
+
+          {/* Header */}
+          {resourceViewerHeader}
+
+          {/* Linked Assets Tab */}
+          <Box
+            sx={{
+              paddingLeft: "1.75rem",
+              position: "relative",
+              "& .MuiTabs-root": {
+                minHeight: "48px",
+              },
+              "& .MuiTab-root": {
+                fontFamily: '"Product Sans Regular", sans-serif',
+                fontSize: "14px",
+                color: "#575757",
+                textTransform: "none",
+                minHeight: "48px",
+                padding: "12px 20px 16px",
+                "&.Mui-selected": {
+                  color: "#0E4DCA",
                 },
               },
-              '& .MuiSvgIcon-root': {
-                color: '#666666',
+              "& .MuiTabs-indicator": {
+                backgroundColor: "transparent",
+                "&::after": {
+                  content: '""',
+                  position: "absolute",
+                  left: "20px",
+                  right: "20px",
+                  bottom: "-2px",
+                  height: "5px",
+                  backgroundColor: "white",
+                  borderTop: "3px solid #0E4DCA",
+                  borderRadius: "2.5px 2.5px 0 0",
+                },
               },
             }}
           >
-            <MenuItem value="relevance" sx={{fontSize:'12px'}}>Relevance</MenuItem>
-            <MenuItem value="name" sx={{fontSize:'12px'}}>Name</MenuItem>
-            <MenuItem value="assets" sx={{fontSize:'12px'}}>Assets</MenuItem>
-          </Select>
-        </FormControl>
-      </Box>
-      
-      <Grid container spacing={2}>
-        {getSortedSubTypes(selectedCard?.subItems).map((subItem:any, index:number) => (
-          <Grid key={index}>
-            <Card
-              onClick={() => handleSubItemClick(subItem)}
-              sx={{
-                width: '289px',
-                height: '72px', // Changed from 65px
-                cursor: 'pointer',
-                borderRadius: '16px',
-                border: '1px solid var(--Text-Tertiary, #DADCE0)',
-                backgroundColor: '#ffffff',
-                boxShadow: 'none',
-                display: 'flex',
-                alignItems: 'center',
-                '&:hover': {
-                  backgroundColor: '#F8FAFD',
-                  border: '1px solid #E7F0FE',
-                },
-              }}
-            >
-              <CardContent
-                sx={{
-                  marginTop: '8.5px',
-                  marginLeft: '-2px',
-                  padding: '16px',
-                  width: '100%',
-                  height: '100%',
-                  display: 'flex',
-                  alignItems: 'center',
+            {resourcesStatus === 'loading' ? (
+              <Box sx={{ minHeight: '48px', height: '48px', display: 'flex', alignItems: 'flex-end', pb: '8px' }}>
+                <Skeleton
+                  variant="text"
+                  width={100}
+                  height={20}
+                  sx={{ borderRadius: '4px', bgcolor: '#E8EAED' }}
+                />
+              </Box>
+            ) : (
+              <Tabs
+                value={0}
+                aria-label="linked assets tabs"
+                TabIndicatorProps={{
+                  children: <span className="indicator" />,
                 }}
               >
-                <Box 
-                  sx={{ 
-                    flex: 1,
-                    width: '100%',
-                    height: '38px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'center',
-                    gap: '2px',
-                  }}
-                >
-                  <Typography
-                    variant="h6"
-                    sx={{
-                      fontFamily: 'Google Sans Text, sans-serif',
-                      fontWeight: 500,
-                      fontSize: '14px',
-                      lineHeight: '20px',
-                      color: '#1F1F1F',
-                    }}
-                  >
-                    {subItem.title}
-                  </Typography>
-                 <Typography
-                    sx={{
-                      fontFamily: 'Google Sans Text, sans-serif',
-                      fontWeight: 400,
-                      fontSize: '12px',
-                      lineHeight: '16px',
-                      color: '#666666',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 0.5,
-                    }}
-                  >
-                    {selectedCard?.countsFetched ? (
-                      subItem.fieldValues
-                    ) : (
-                      <CircularProgress size={12} />
-                    )}
-                    {subItem.fieldValues === 1 ? ' Asset' : ' Assets'}
-                  </Typography>
-                </Box>
-              </CardContent>
-            </Card>
-          </Grid>
-        ))}
-      </Grid>
-    </>
-  );
-
-  // Custom header for BrowseByAnnotation
-  const customHeader = (
-    <Box
-      sx={{
-        display: 'flex',
-        alignItems: 'center',
-      }}
-    >
-      <ArrowBack
-        onClick={handleBackClick}
-        sx={{
-          marginRight: 1,
-          color: '#0B57D0',
-          cursor: 'pointer',
-        }}
-      />
-      <Typography
-        variant="h6"
-        sx={{
-          fontWeight: 500,
-          fontSize: '18px',
-          color: '#1F1F1F',
-        }}
-      >
-        {selectedSubItem?.title}
-      </Typography>
-    </Box>
-  );
-
-  // Create renderSubItemView using ResourceViewer
-  const renderSubItemView = (
-    <ResourceViewer
-      resources={resources}
-      resourcesStatus={resourcesStatus}
-      error={error}
-      previewData={previewData}
-      onPreviewDataChange={(data) => {
-        setPreviewData(data);
-        setIsPreviewOpen(!!data); // Open preview when data is set (including placeholder)
-      }}
-      selectedTypeFilter={selectedTypeFilter}
-      onTypeFilterChange={setSelectedTypeFilter}
-      typeAliases={typeAliases}
-      viewMode={viewMode}
-      onViewModeChange={setViewMode}
-      id_token={id_token}
-      showFilters={true}
-      showSortBy={true}
-      showResultsCount={true}
-      customHeader={customHeader}
-      containerStyle={{ background: "#FFF", height: "100vh", borderRadius: "20px", paddingTop: "10px"}}
-      contentStyle={{ minHeight: "100vh", maxHeight: "100vh", overflowY: 'auto' }}
-      renderPreview={false}
-      startIndex={startIndex}
-      pageSize={pageSize}
-      setPageSize={setPageSize}
-      requestItemStore={requestItemStore}
-      resourcesTotalSize={resourcesTotalSize}
-      handlePagination={handlePagination}
-    />
-  );
-
-
-  // Show preview only when a SubItem is selected
-  if (selectedSubItem) {
-    return (
-      <>
-        <div style={{backgroundColor:"#F8FAFD", minHeight:"100vh", position: "relative", flex: 1}}>
-          {/* Main Content - Two Column Layout */}
-          <Grid container spacing={0} style={{marginRight: "20px", marginBottom: "20px"}}>
-            <Grid size={isPreviewOpen ? 8 : 12} sx={{backgroundColor: '#ffffff',borderRadius: '20px'}}>
-              <div style={{
-                transition: 'margin-left 0.3s ease-in-out',
-              }}>
-                <Box
-                  sx={{
-                    flex: 1,
-                    backgroundColor: '#ffffff',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    overflow: 'hidden',
-                    borderRadius: '20px',
-                  }}
-                >
-                  {renderSubItemView}
-                </Box>
-              </div>
-            </Grid>
-            {isPreviewOpen && (
-              <Grid size={4}>
-                <ResourcePreview
-                  previewData={previewData}
-                  onPreviewDataChange={(data) => {
-                    setPreviewData(data);
-                    setIsPreviewOpen(!!data); // Open preview when data is set (including placeholder)
-                  }}
-                  id_token={id_token}
-                />
-              </Grid>
+                <Tab label="Linked Assets" />
+              </Tabs>
             )}
-          </Grid>
-        </div>
-      </>
+          </Box>
+          <Box sx={{ mx: "20px", borderBottom: "1px solid #DADCE0" }} />
+
+          {/* Linked Assets Content */}
+          <Box sx={{ flex: 1, p: '20px', overflow: 'hidden' }}>
+            <AspectLinkedAssets
+              linkedAssets={resources}
+              searchTerm={linkedAssetsSearchTerm}
+              onSearchTermChange={setLinkedAssetsSearchTerm}
+              idToken={id_token}
+              isPreviewOpen={isPreviewOpen}
+              onAssetPreviewChange={(data) => {
+                setPreviewData(data);
+                setIsPreviewOpen(!!data);
+                if (isSmallScreen && data) {
+                  onSidebarToggle?.(false);
+                }
+              }}
+              resourcesStatus={resourcesStatus}
+              isSidebarOpen={isSidebarOpen}
+              onSidebarToggle={onSidebarToggle}
+            />
+          </Box>
+        </Paper>
+
+        {/* Resource Preview Panel - matching Glossaries CSS */}
+        <Paper
+          elevation={0}
+          sx={{
+            width: isPreviewOpen ? 'clamp(300px, 22vw, 360px)' : '0px',
+            minWidth: isPreviewOpen ? 'clamp(300px, 22vw, 360px)' : '0px',
+            height: 'calc(100vh - 100px)',
+            borderRadius: '0px',
+            backgroundColor: '#fff',
+            border: 'transparent',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            flexShrink: 0,
+            transition: 'width 0.3s ease-in-out, min-width 0.3s ease-in-out, opacity 0.3s ease-in-out, margin-left 0.3s ease-in-out',
+            marginLeft: isPreviewOpen ? '2px' : 0,
+            marginRight: isPreviewOpen ? '16px' : 0,
+            opacity: isPreviewOpen ? 1 : 0,
+            borderWidth: isPreviewOpen ? undefined : 0,
+          }}
+        >
+          <ResourcePreview
+            previewData={previewData}
+            onPreviewDataChange={(data) => {
+              if (data) {
+                setPreviewData(data);
+                setIsPreviewOpen(true);
+              } else {
+                setIsPreviewOpen(false);
+              }
+            }}
+            id_token={id_token}
+            isGlossary={true}
+          />
+        </Paper>
+      </Box>
     );
   }
 
-  // Original single-column layout for main view and card detail view
-  return (
-    <>
-      <Box
+  // If no selectedCard, show empty state
+  if (!selectedCard) {
+    return (
+      <Paper
+        elevation={0}
         sx={{
           flex: 1,
-          backgroundColor: '#ffffff',
-          padding: '16px 12px',
+          height: 'calc(100vh - 80px)',
+          borderRadius: '0px',
+          backgroundColor: '#fff',
+          border: 'transparent',
           display: 'flex',
-          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
           overflow: 'hidden',
-          borderRadius: '20px',
-          marginRight: '24px',
-          marginBottom: '24px'
+          position: 'relative',
         }}
       >
-        {selectedCard ? renderCardDetailView() : renderMainView}
+        <Typography sx={{ color: '#575757', fontFamily: '"Google Sans Text", sans-serif' }}>
+          Select an aspect from the sidebar
+        </Typography>
+      </Paper>
+    );
+  }
+
+  // Tab-based view (Overview + Sub Types)
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        flex: 1,
+        height: 'calc(100vh - 72px)',
+        borderRadius: '0px',
+        backgroundColor: '#fff',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        position: 'relative',
+      }}
+    >
+      {loadingAspectName === selectedCard?.name ? (
+        <AnnotationPageSkeleton />
+      ) : (
+      <>
+      {/* Header with Title, Description, Stats, and Tabs */}
+      <Box
+        sx={{
+          flexShrink: 0,
+        }}
+      >
+        {/* Sections Toggle Button */}
+        <Box sx={{ padding: '12px 20px 0px' }}>
+          <span
+            style={{
+              boxSizing: 'border-box',
+              display: 'inline-flex',
+              flexDirection: 'row',
+              alignItems: 'center',
+              padding: '8px 13px',
+              gap: '8px',
+              height: '32px',
+              border: isSidebarOpen ? 'none' : '1px solid #0E4DCA',
+              borderRadius: '59px',
+              background: isSidebarOpen ? '#0E4DCA' : 'none',
+              color: isSidebarOpen ? '#EDF2FC' : '#0E4DCA',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+            }}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const newState = !isSidebarOpen;
+              onSidebarToggle?.(newState);
+            }}
+          >
+            {isSidebarOpen ? <Close style={{ width: '16px', height: '16px', flexShrink: 0 }} /> : <FormatListBulleted style={{ width: '16px', height: '16px', flexShrink: 0 }} />}
+            <span style={{
+              fontFamily: '"Google Sans", sans-serif',
+              fontWeight: 500,
+              fontSize: '12px',
+              lineHeight: '16px',
+              letterSpacing: '0.1px',
+              whiteSpace: 'nowrap',
+            }}>Sections</span>
+          </span>
+        </Box>
+
+        {/* Title Row */}
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: "20px",
+            padding: "20px 20px 0px",
+          }}
+        >
+          <ThemedIconContainer iconColor="#1A73E8">
+            <img src={AnnotationsIconBlue} alt="" style={{ width: '24px', height: '24px' }} />
+          </ThemedIconContainer>
+          <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "20px", flexWrap: "wrap" }}>
+              <Tooltip title={selectedCard?.title || ''} arrow placement="top">
+                <label style={{
+                  fontFamily: '"Google Sans", sans-serif',
+                  color: "#1F1F1F", fontSize: "28px",
+                  fontWeight: "400", lineHeight: "36px",
+                  maxWidth: "500px", overflow: "hidden",
+                  textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}>
+                  {selectedCard?.title}
+                </label>
+              </Tooltip>
+            </div>
+          </div>
+        </Box>
+
+        {/* Description Section */}
+        <div style={{ padding: "16px 20px 0px", maxWidth: "800px" }}>
+          {selectedCard?.description ? (
+            <>
+              <div style={{
+                fontFamily: '"Google Sans", sans-serif',
+                fontSize: "14px",
+                lineHeight: "20px",
+                color: "#575757",
+                fontWeight: 400,
+                maxHeight: descriptionExpanded ? "none" : "60px",
+                overflow: "hidden",
+                position: "relative",
+              }}>
+                {selectedCard.description}
+              </div>
+              {selectedCard.description.length > 200 && (
+                <button
+                  onClick={() => setDescriptionExpanded(!descriptionExpanded)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    padding: "6px 0px",
+                    color: "#0B57D0",
+                    fontFamily: '"Google Sans", sans-serif',
+                    fontSize: "14px",
+                    fontWeight: 500,
+                    lineHeight: "20px",
+                  }}
+                >
+                  {descriptionExpanded ? <KeyboardArrowUp sx={{ fontSize: "20px" }} /> : <KeyboardArrowDown sx={{ fontSize: "20px" }} />}
+                  {descriptionExpanded ? 'Show less' : 'Show more'}
+                </button>
+              )}
+            </>
+          ) : (
+            <div style={{
+              fontFamily: '"Google Sans", sans-serif',
+              fontSize: "14px",
+              lineHeight: "20px",
+              color: "#575757",
+              fontWeight: 400,
+              fontStyle: "italic",
+            }}>
+              No description provided for this aspect.
+            </div>
+          )}
+        </div>
+
+        {/* Tabs */}
+        <Box
+          sx={{
+            paddingLeft: "1.75rem",
+            position: "relative",
+            "& .MuiTabs-root": {
+              minHeight: "48px",
+            },
+            "& .MuiTab-root": {
+              fontFamily: '"Product Sans Regular", sans-serif',
+              fontSize: "14px",
+              color: "#575757",
+              textTransform: "none",
+              minHeight: "48px",
+              padding: "12px 20px 16px",
+              "&.Mui-selected": {
+                color: "#0E4DCA",
+              },
+            },
+            "& .MuiTabs-indicator": {
+              backgroundColor: "transparent",
+              "&::after": {
+                content: '""',
+                position: "absolute",
+                left: "20px",
+                right: "20px",
+                bottom: "-2px",
+                height: "5px",
+                backgroundColor: "white",
+                borderTop: "3px solid #0E4DCA",
+                borderRadius: "2.5px 2.5px 0 0",
+              },
+            },
+          }}
+        >
+          <Tabs
+            value={tabValue}
+            onChange={onTabChange}
+            aria-label="annotation tabs"
+            TabIndicatorProps={{
+              children: <span className="indicator" />,
+            }}
+          >
+            <Tab label="Overview" />
+            <Tab label="Sub Types" />
+          </Tabs>
+        </Box>
+        <Box sx={{ mx: "20px", borderBottom: "1px solid #DADCE0" }} />
       </Box>
-    </>
+
+      {/* Tab Content */}
+      <Box sx={{ p: "0px 20px 20px 20px", pt: tabValue !== 0 ? "20px" : "0px", overflowY: "hidden", flex: 1 }}>
+        {/* Overview Tab */}
+        {tabValue === 0 && selectedCard && (
+          <Box sx={{ height: "100%", overflowY: "auto", minHeight: 0 }}>
+            <DetailPageOverview
+              entry={transformAnnotationToEntry(selectedCard)}
+              css={{ width: "100%" }}
+            />
+          </Box>
+        )}
+
+        {/* Sub Types Tab */}
+        {tabValue === 1 && (
+          selectedCard?.subTypesLoaded ? (
+            <SubTypesTab
+              key={selectedCard?.title || selectedCard?.name}
+              items={selectedCard?.subItems || []}
+              searchTerm={contentSearchTerm}
+              onSearchTermChange={onContentSearchTermChange}
+              sortBy={sortBy}
+              sortOrder={sortOrder}
+              onSortByChange={onSortByChange}
+              onSortOrderToggle={onSortOrderToggle}
+              onItemClick={handleSubTypeClick}
+            />
+          ) : (
+            <SubTypesTabSkeleton />
+          )
+        )}
+      </Box>
+      </>
+      )}
+    </Paper>
   );
 };
 
-export default MainComponent; 
+export default MainComponent;

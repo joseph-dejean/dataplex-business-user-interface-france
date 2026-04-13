@@ -17,7 +17,8 @@ import {
   ListItemText,
   TextField,
   InputAdornment,
-  Tooltip
+  Tooltip,
+  Drawer
 } from '@mui/material';
 import { 
   FilterList,
@@ -28,6 +29,7 @@ import {
   InfoOutline
 } from '@mui/icons-material';
 import ConfigurationsPanel from './ConfigurationsPanel';
+import { useAccessRequest } from '../../contexts/AccessRequestContext';
 
 /**
  * @file CurrentRules.tsx
@@ -89,11 +91,17 @@ const CurrentRules: React.FC<CurrentRulesProps> = ({dataQualtyScan}) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [isConfigurationsOpen, setIsConfigurationsOpen] = useState(false);
   //const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const { setAccessPanelOpen } = useAccessRequest();
 
   useEffect(() => {
     setFilterText('');
     setIsExpanded(true);
   }, []);
+
+  // Sync configurations panel state with global context for z-index management
+  useEffect(() => {
+    setAccessPanelOpen(isConfigurationsOpen);
+  }, [isConfigurationsOpen, setAccessPanelOpen]);
 
   // Debug: Monitor selectedRows changes
   // useEffect(() => {
@@ -398,22 +406,6 @@ const CurrentRules: React.FC<CurrentRulesProps> = ({dataQualtyScan}) => {
       flex: 2,
       position: 'relative'
     }}>
-      {/* Dark overlay when configurations panel is open */}
-      {isConfigurationsOpen && (
-        <Box 
-          onClick={() => setIsConfigurationsOpen(false)}
-          sx={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            zIndex: 1000,
-            cursor: 'pointer'
-          }} 
-        />
-      )}
       <Box sx={{
         backgroundColor: '#ffffff',
         borderRadius: '0.5rem',
@@ -1125,11 +1117,23 @@ const CurrentRules: React.FC<CurrentRulesProps> = ({dataQualtyScan}) => {
       </Collapse>
 
       {/* Configurations Panel */}
-      <ConfigurationsPanel 
-        isOpen={isConfigurationsOpen}
+      <Drawer
+        anchor="right"
+        open={isConfigurationsOpen}
         onClose={handleConfigurationsClose}
-        dataQualtyScan={dataQualtyScan}
-      />
+        PaperProps={{
+          sx: {
+            width: '38.25rem',
+            backgroundColor: '#ffffff',
+            boxShadow: '-0.25rem 0rem 0.5rem rgba(0, 0, 0, 0.1)',
+          }
+        }}
+      >
+        <ConfigurationsPanel
+          onClose={handleConfigurationsClose}
+          dataQualtyScan={dataQualtyScan}
+        />
+      </Drawer>
       </Box>
     </Box>
   );

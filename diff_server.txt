@@ -1,0 +1,61 @@
+﻿diff --git a/backend/server.js b/backend/server.js
+index 0101e09..964122a 100644
+--- a/backend/server.js
++++ b/backend/server.js
+@@ -3551,10 +3551,39 @@ app.post('/api/v1/search', async (req, res) => {
+ 
+     console.log(`[SEARCH] Searching across ${allProjects.length} projects: ${allProjects.join(', ')}, Location: ${location}`);
+ 
+-    // Use query directly - Dataplex handles semantic search natively when semanticSearch=true
+-    const searchQuery = query || '*';
++    // If semantic search is enabled, we use Vertex AI to translate natural language to a Dataplex search query
++    let searchQuery = query || '*';
+ 
+-    console.log(`[SEARCH] Using Dataplex native search with semanticSearch=${semanticSearch ? 'true' : 'false'}`);
++    if (semanticSearch && query && query !== '*') {
++      try {
++        console.log(`[SEMANTIC SEARCH] Interpreting natural language query using Vertex AI...`);
++        const safeQuery = query.length > 500 ? query.substring(0, 500) + '...' : query;
++        const vertex_ai = new VertexAI({
++          project: PROJECT_ID,
++          location: process.env.GCP_LOCATION || 'europe-west1'
++        });
++        const generativeModel = vertex_ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
++
++        const aiPrompt = `You are a data catalog search assistant. Given a user's natural language query, extract the key search terms and concepts that would help find relevant database tables or datasets.
++  
++User Query: "${safeQuery}"
++
++Analyze the query and return a valid JSON object with ONLY ONE field "dataplexQuery" containing a search query string optimized for Dataplex/Data Catalog search. Do not return markdown.`;
++
++        const aiResult = await generativeModel.generateContent(aiPrompt);
++        let aiResponseText = aiResult.response.candidates[0].content.parts[0].text.trim();
++        let cleanJson = aiResponseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
++        const searchConfig = JSON.parse(cleanJson);
++        if (searchConfig.dataplexQuery) {
++          searchQuery = searchConfig.dataplexQuery;
++          console.log(`[SEMANTIC SEARCH] Translated: "${query}" -> "${searchQuery}"`);
++        }
++      } catch (e) {
++        console.warn('[SEMANTIC SEARCH] Vertex AI translation failed, falling back to basic query:', e.message);
++      }
++    } else {
++      console.log(`[SEARCH] Using standard keyword search: "${searchQuery}"`);
++    }
+ 
+     // Search across all projects and merge results
+     const searchPromises = allProjects.map(async (projId) => {
+@@ -3563,11 +3592,9 @@ app.post('/api/v1/search', async (req, res) => {
+           name: `projects/${projId}/locations/${location}`,
+           query: searchQuery,
+           pageSize: pageSize || 20,
+-          pageToken: pageToken,
+-          // Use Dataplex native semantic search - no external AI translation needed
+-          semanticSearch: semanticSearch || false
++          pageToken: pageToken
+         };
+-        console.log(`[SEARCH] Calling Dataplex for ${projId} with semanticSearch=${request.semanticSearch}`);
++        console.log(`[SEARCH] Calling Dataplex for ${projId} with query="${searchQuery}"`);
+         const [results] = await client.searchEntries(request);
+         console.log(`[SEARCH] Project ${projId}: found ${results ? results.length : 0} results`);
+         return results || [];

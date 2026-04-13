@@ -3,11 +3,7 @@ import { createSlice } from '@reduxjs/toolkit';
 const initialState = {
   token: null,
   userData: null,
-  role: null,
-  isAdmin: false,
-  mode: localStorage.getItem('mode')
-    ? localStorage.getItem('mode')
-    : 'light',
+  mode: localStorage.getItem('mode') || 'light',
 };
 
 export const userSlice = createSlice({
@@ -17,8 +13,6 @@ export const userSlice = createSlice({
     setCredentials: (state, action) => {
       state.token = action.payload.token;
       state.userData = action.payload.user;
-      state.role = action.payload.user?.role || null;
-      state.isAdmin = action.payload.user?.isAdmin || false;
     },
     setToken: (state, action) => {
       state.token = action.payload;

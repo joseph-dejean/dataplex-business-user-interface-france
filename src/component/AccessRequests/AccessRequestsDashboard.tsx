@@ -22,13 +22,18 @@ import {
   Button,
   TextField,
   InputAdornment,
-  Tooltip
+  Tooltip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions
 } from '@mui/material';
-import { ArrowBack, CheckCircle, Cancel, Refresh, Person, Assignment, AdminPanelSettings, Search } from '@mui/icons-material';
+import { ArrowBack, CheckCircle, Cancel, Refresh, Person, Assignment, AdminPanelSettings, Search, Add } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthProvider';
 import axios from 'axios';
 import { URLS } from '../../constants/urls';
+import SubmitAccess from '../SearchPage/SubmitAccess';
 
 interface AccessRequest {
   id: string;
@@ -46,6 +51,9 @@ interface AccessRequest {
   requestedRole?: string;
   approvals?: string[]; // Emails of stewards who already approved
   serviceNowTicket?: string;
+  serviceNowSysId?: string;
+  serviceNowState?: string;
+  serviceNowLink?: string;
 }
 
 const AccessRequestsDashboard: React.FC = () => {
@@ -54,10 +62,13 @@ const AccessRequestsDashboard: React.FC = () => {
   const [requests, setRequests] = useState<AccessRequest[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>('awaiting');
   const [projectFilter, setProjectFilter] = useState<string>('');
   const [tabValue, setTabValue] = useState<number>(0);
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [isNewRequestOpen, setIsNewRequestOpen] = useState<boolean>(false);
+  const [newRequestAssetName, setNewRequestAssetName] = useState<string>('');
+  const [newRequestDialogOpen, setNewRequestDialogOpen] = useState<boolean>(false);
 
   // Determine user role (admin, manager, or user)
   const userRole = user?.isAdmin || user?.role === 'admin' || user?.role === 'manager' ? 'admin' : 'user';
@@ -65,6 +76,9 @@ const AccessRequestsDashboard: React.FC = () => {
   useEffect(() => {
     fetchAccessRequests();
   }, [user?.email, userRole, statusFilter, projectFilter]);
+
+  // Statuses that represent "awaiting action" (needs approval or rejection)
+  const AWAITING_STATUSES = ['PENDING', 'PARTIALLY_APPROVED'];
 
   const fetchAccessRequests = async () => {
     setLoading(true);
@@ -76,7 +90,8 @@ const AccessRequestsDashboard: React.FC = () => {
         userRole: userRole
       };
 
-      if (statusFilter !== 'all') {
+      // Only send specific status to backend; 'all' and 'awaiting' are handled client-side
+      if (statusFilter !== 'all' && statusFilter !== 'awaiting') {
         params.status = statusFilter;
       }
 
@@ -106,12 +121,18 @@ const AccessRequestsDashboard: React.FC = () => {
     }
   };
 
-  const handleUpdateStatus = async (requestId: string, newStatus: 'approved' | 'rejected' | 'revoked') => {
+  // Reject dialog state
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+  const [rejectRequestId, setRejectRequestId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+
+  const handleUpdateStatus = async (requestId: string, newStatus: 'approved' | 'rejected' | 'revoked', reason?: string) => {
     try {
       const response = await axios.post(`${URLS.API_URL}${URLS.UPDATE_ACCESS_REQUEST}`, {
         requestId,
         status: newStatus.toUpperCase(),
-        reviewerEmail: user?.email
+        reviewerEmail: user?.email,
+        ...(reason ? { adminNote: reason } : {})
       }, {
         headers: {
           Authorization: `Bearer ${user?.token}`,
@@ -194,6 +215,13 @@ const AccessRequestsDashboard: React.FC = () => {
 
     if (!passesTab) return false;
 
+    // Apply status filter (client-side for 'awaiting' virtual filter)
+    if (statusFilter === 'awaiting') {
+      if (!AWAITING_STATUSES.includes(req.status?.toUpperCase())) return false;
+    } else if (statusFilter !== 'all') {
+      if (req.status?.toUpperCase() !== statusFilter.toUpperCase()) return false;
+    }
+
     // Apply text search filter
     if (searchTerm) {
       const search = searchTerm.toLowerCase();
@@ -249,7 +277,16 @@ const AccessRequestsDashboard: React.FC = () => {
               Admin Management
             </Button>
           )}
-          <IconButton onClick={fetchAccessRequests} sx={{ marginLeft: 'auto' }}>
+          <Button
+            variant="contained"
+            size="small"
+            onClick={() => setNewRequestDialogOpen(true)}
+            sx={{ ml: 'auto', borderRadius: '20px', textTransform: 'none' }}
+            startIcon={<Add />}
+          >
+            New Request
+          </Button>
+          <IconButton onClick={fetchAccessRequests}>
             <Refresh />
           </IconButton>
         </Box>
@@ -301,8 +338,10 @@ const AccessRequestsDashboard: React.FC = () => {
               label="Status"
               onChange={(e) => setStatusFilter(e.target.value)}
             >
+              <MenuItem value="awaiting">Awaiting Action</MenuItem>
               <MenuItem value="all">All Status</MenuItem>
               <MenuItem value="pending">Pending</MenuItem>
+              <MenuItem value="partially_approved">Partially Approved</MenuItem>
               <MenuItem value="approved">Approved</MenuItem>
               <MenuItem value="rejected">Rejected</MenuItem>
               <MenuItem value="revoked">Revoked</MenuItem>
@@ -350,6 +389,7 @@ const AccessRequestsDashboard: React.FC = () => {
               <TableHead>
                 <TableRow sx={{ backgroundColor: '#F8FAFD' }}>
                   <TableCell><strong>Asset Name</strong></TableCell>
+                  <TableCell><strong>Asset Type</strong></TableCell>
                   <TableCell><strong>Requester</strong></TableCell>
                   <TableCell><strong>Status</strong></TableCell>
                   <TableCell><strong>Submitted</strong></TableCell>
@@ -367,16 +407,60 @@ const AccessRequestsDashboard: React.FC = () => {
                       <div style={{ fontSize: '0.75rem', color: '#5F6368' }}>{request.projectId}</div>
                     </TableCell>
                     <TableCell>
+                      {request.assetType ? (
+                        <Chip label={request.assetType} size="small" variant="outlined" sx={{ fontSize: '11px', height: '22px' }} />
+                      ) : (
+                        <Typography variant="caption" sx={{ color: '#9AA0A6' }}>—</Typography>
+                      )}
+                    </TableCell>
+                    <TableCell>
                       <Typography variant="body2" sx={{ color: '#1F1F1F' }}>{request.requesterEmail}</Typography>
                       {request.serviceNowTicket && (
-                        <Tooltip title="ServiceNow Ticket">
-                          <Chip
-                            label={request.serviceNowTicket}
-                            size="small"
-                            variant="outlined"
-                            sx={{ fontSize: '10px', height: '18px', mt: 0.5, borderColor: '#DADCE0' }}
-                          />
-                        </Tooltip>
+                        request.serviceNowTicket === 'ERROR-CREATING-SN' ? (
+                          <Tooltip title="Failed to create ServiceNow ticket. Check ServiceNow configuration.">
+                            <Chip
+                              label="SN: Error"
+                              size="small"
+                              variant="outlined"
+                              sx={{
+                                fontSize: '10px', height: '20px', mt: 0.5,
+                                borderColor: '#EA4335', color: '#EA4335',
+                                cursor: 'default'
+                              }}
+                            />
+                          </Tooltip>
+                        ) : request.serviceNowTicket.startsWith('MOCK-SN-') ? (
+                          <Tooltip title="ServiceNow integration is not configured. Contact your administrator to enable it.">
+                            <Chip
+                              label="SN: Not configured"
+                              size="small"
+                              variant="outlined"
+                              sx={{
+                                fontSize: '10px', height: '20px', mt: 0.5,
+                                borderColor: '#9AA0A6', color: '#9AA0A6',
+                                cursor: 'default'
+                              }}
+                            />
+                          </Tooltip>
+                        ) : (
+                          <Tooltip title={`ServiceNow: ${request.serviceNowState || 'Click to view'}`}>
+                            <Chip
+                              label={`SN: ${request.serviceNowTicket}${request.serviceNowState ? ' - ' + request.serviceNowState : ''}`}
+                              size="small"
+                              variant="outlined"
+                              clickable={!!request.serviceNowLink}
+                              onClick={() => request.serviceNowLink && window.open(request.serviceNowLink, '_blank')}
+                              sx={{
+                                fontSize: '10px', height: '20px', mt: 0.5,
+                                borderColor: request.serviceNowState === 'Approved' ? '#34A853' :
+                                  request.serviceNowState === 'Rejected' ? '#EA4335' : '#1A73E8',
+                                color: request.serviceNowState === 'Approved' ? '#34A853' :
+                                  request.serviceNowState === 'Rejected' ? '#EA4335' : '#1A73E8',
+                                cursor: request.serviceNowLink ? 'pointer' : 'default'
+                              }}
+                            />
+                          </Tooltip>
+                        )
                       )}
                     </TableCell>
                     <TableCell>
@@ -419,7 +503,7 @@ const AccessRequestsDashboard: React.FC = () => {
                               variant="outlined"
                               color="error"
                               startIcon={<Cancel sx={{ fontSize: '16px !important' }} />}
-                              onClick={() => handleUpdateStatus(request.id, 'rejected')}
+                              onClick={() => { setRejectRequestId(request.id); setRejectReason(''); setRejectDialogOpen(true); }}
                               sx={{ textTransform: 'none', borderRadius: '16px', py: 0 }}
                             >
                               Reject
@@ -454,6 +538,76 @@ const AccessRequestsDashboard: React.FC = () => {
           </TableContainer>
         )}
       </Box>
+
+      {/* Reject Confirmation Dialog */}
+      <Dialog open={rejectDialogOpen} onClose={() => setRejectDialogOpen(false)}>
+        <DialogTitle>Reject Access Request</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ mb: 2 }}>Are you sure you want to reject this access request?</Typography>
+          <TextField
+            label="Reason (optional)"
+            fullWidth
+            multiline
+            rows={3}
+            value={rejectReason}
+            onChange={(e) => setRejectReason(e.target.value)}
+            placeholder="Provide a reason for rejection..."
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRejectDialogOpen(false)}>Cancel</Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={() => { if (rejectRequestId) { handleUpdateStatus(rejectRequestId, 'rejected', rejectReason); setRejectDialogOpen(false); } }}
+          >
+            Reject
+          </Button>
+        </DialogActions>
+      </Dialog>
+      {/* New Request: enter asset name dialog */}
+      <Dialog open={newRequestDialogOpen} onClose={() => setNewRequestDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Request Access to a Dataset or Table</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Enter the name of the dataset or table you need access to (e.g. <em>dataplex-ui.bank.customer</em>).
+          </Typography>
+          <TextField
+            autoFocus
+            fullWidth
+            label="Asset name"
+            placeholder="project.dataset.table"
+            value={newRequestAssetName}
+            onChange={(e) => setNewRequestAssetName(e.target.value)}
+            size="small"
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setNewRequestDialogOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            disabled={!newRequestAssetName.trim()}
+            onClick={() => {
+              setNewRequestDialogOpen(false);
+              setIsNewRequestOpen(true);
+            }}
+          >
+            Continue
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* SubmitAccess panel for new requests */}
+      <SubmitAccess
+        isOpen={isNewRequestOpen}
+        onClose={() => setIsNewRequestOpen(false)}
+        assetName={newRequestAssetName}
+        onSubmitSuccess={() => {
+          setIsNewRequestOpen(false);
+          setNewRequestAssetName('');
+          fetchAccessRequests();
+        }}
+      />
     </Box>
   );
 };

@@ -7,7 +7,7 @@ type Props = {
   adminOnly?: boolean;
 };
 
-export const ProtectedRoute = ({ children, adminOnly = false }: Props) => {
+export const ProtectedRoute = ({ children, adminOnly }: Props) => {
   const { user } = useAuth();
   if (!user) return <Navigate to="/" />;
   if (adminOnly && !user.isAdmin) return <Navigate to="/home" />;

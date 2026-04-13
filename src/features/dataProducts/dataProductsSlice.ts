@@ -2,30 +2,12 @@ import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import axios, { AxiosError } from 'axios';
 
 const getProjectNumber = (projectId: string) => {
-  try {
-    let session = localStorage.getItem('sessionUserData');
-    let appConfig = session ? JSON.parse(session)?.appConfig : null;
-
-    if (!appConfig?.projects) {
-      console.warn('No projects found in appConfig, using projectId as fallback');
-      return projectId;
-    }
-
-    let projects: any[] = appConfig.projects;
-    let project = projects.find((p) => p.projectId === projectId);
-
-    if (!project?.name) {
-      console.warn(`Project ${projectId} not found in appConfig, using projectId as fallback`);
-      return projectId;
-    }
-
-    let projectName: string = project.name;
-    const parts = projectName.split('/');
-    return parts.length > 1 ? parts[1] : projectId;
-  } catch (error) {
-    console.error('Error getting project number:', error);
-    return projectId;
-  }
+  let session = localStorage.getItem('sessionUserData');
+  let appConfig = session ? JSON.parse(session)?.appConfig : null;
+  
+  let projects:any[] = appConfig.projects;
+  let projectName:string = projects.find((p) => p.projectId === projectId)?.name || '';
+  return projectName.split('/').length > 0 ? projectName.split('/')[1] : '';
 }
 
 // createAsyncThunk is used for asynchronous actions.
@@ -50,6 +32,9 @@ export const fetchDataProductsList = createAsyncThunk('dataProducts/fetchDataPro
 
   } catch (error) {
     if (error instanceof AxiosError) {
+      if (error.response?.status === 403) {
+        return rejectWithValue({ type: 'PERMISSION_DENIED' });
+      }
       return rejectWithValue(error.response?.data || error.message);
     }
     return rejectWithValue('An unknown error occurred');
@@ -63,61 +48,39 @@ export const getDataProductDetails = createAsyncThunk('dataProducts/getDataProdu
   }
 
   try {
-    // fetching data products from API endpoint
+    // fetching data products from API endpoint 
     axios.defaults.headers.common['Authorization'] = requestData.id_token ? `Bearer ${requestData.id_token}` : '';
-
-    const parts = requestData.dataProductId.split('/');
-    const project = parts[1];
-    const location = parts[3];
-    const dataProductName = parts[5] || parts.pop();
-
-    // First, try to get the data product directly from the Dataplex API
-    try {
-      const directResponse = await axios.get(
-        `https://dataplex.googleapis.com/v1/projects/${project}/locations/${location}/dataProducts/${dataProductName}`
-      );
-
-      if (directResponse.status === 200) {
-        console.log("Direct API response", directResponse.data);
-        // Transform to match expected entry format
-        return {
-          name: directResponse.data.name,
-          entrySource: {
-            displayName: directResponse.data.displayName,
-            description: directResponse.data.description
-          },
-          fullyQualifiedName: directResponse.data.name,
-          aspects: directResponse.data.aspects || {},
-          ...directResponse.data
-        };
-      }
-    } catch (directError) {
-      console.log("Direct API failed, trying lookupEntry...", directError);
-    }
-
-    // Fallback: Try the lookupEntry API
-    const projectNumber = getProjectNumber(project);
-    const finalEntryName = `projects/${project}/locations/${location}/entryGroups/@dataplex/entries/projects/${projectNumber}/locations/${location}/dataProducts/${dataProductName}`;
+    
+    const project = requestData.dataProductId.split('/')[1];
+    const location = requestData.dataProductId.split('/')[3];
+    const finalEntryName = `projects/${project}/locations/${location}/entryGroups/@dataplex/entries/projects/${getProjectNumber(project)}/locations/${location}/dataProducts/${requestData.dataProductId.split('/')[5]}`;
     const lookupUrl = `https://dataplex.googleapis.com/v1/projects/${project}/locations/${location}:lookupEntry`;
 
-    console.log("Lookup URL:", lookupUrl);
-    console.log("Entry name:", finalEntryName);
-
     const response = await axios.get(lookupUrl, {
-      params: {
+    params: {
         entry: finalEntryName,
         view: 'ALL'
-      }
+    }
     });
 
-    console.log("Lookup API response", response);
+    console.log("API response", response);
     return response.status === 200 || response.status !== 401 ? response.data
-      : rejectWithValue('Token expired');
+    : rejectWithValue('Token expired');
+    //return mockSearchData; // For testing, we return mock data
 
   } catch (error) {
     if (error instanceof AxiosError) {
-      console.error("Error fetching data product details:", error.response?.data || error.message);
-      return rejectWithValue(error.response?.data || error.message);
+      const axiosError = error as AxiosError;
+      // Handle 403 Forbidden separately - don't trigger global logout
+      console.log("axiosError.response?.status", axiosError.response);
+      if (axiosError.response?.status === 403) {
+        return rejectWithValue(JSON.stringify({
+          type: "PERMISSION_DENIED",
+          message: "You don't have access to this resource",
+          itemId: requestData.dataProductId,
+        }));
+      }
+      return rejectWithValue(axiosError.response?.data || axiosError.message);
     }
     return rejectWithValue('An unknown error occurred');
   }
@@ -164,6 +127,9 @@ type DataProductsState = {
   dataProductAssets: unknown;
   dataProductAssetsStatus: 'idle' | 'loading' | 'succeeded' | 'failed';
   dataProductAssetsError: string | undefined | unknown | null;
+  // UI state preserved across navigation
+  viewMode: 'table' | 'list';
+  detailTabValue: number;
 };
 
 const initialState: DataProductsState = {
@@ -176,13 +142,26 @@ const initialState: DataProductsState = {
   dataProductAssets: [],
   dataProductAssetsStatus: 'idle',
   dataProductAssetsError: null,
+  viewMode: 'list',
+  detailTabValue: 0,
 };
 
 // createSlice generates actions and reducers for a slice of the Redux state.
 export const dataproductsSlice = createSlice({
   name: 'dataproducts',
   initialState,
-  reducers: {}, // No synchronous reducers needed for this slice
+  reducers: {
+    setDataProductsViewMode: (state, action: { payload: 'table' | 'list' }) => {
+      state.viewMode = action.payload;
+    },
+    setDataProductsDetailTabValue: (state, action: { payload: number }) => {
+      state.detailTabValue = action.payload;
+    },
+    resetDataProductsUIState: (state) => {
+      state.viewMode = 'list';
+      state.detailTabValue = 0;
+    },
+  },
   // The `extraReducers` field lets the slice handle actions defined elsewhere,
   // including actions generated by createAsyncThunk.
   extraReducers: (builder) => {
@@ -212,6 +191,7 @@ export const dataproductsSlice = createSlice({
       })
       .addCase(fetchDataProductsAssetsList.pending, (state) => {
         state.dataProductAssetsStatus = 'loading';
+        state.dataProductAssets = [];  // Clear old assets when fetching new ones
       })
       .addCase(fetchDataProductsAssetsList.fulfilled, (state, action) => {
         state.dataProductAssetsStatus = 'succeeded';
@@ -225,4 +205,5 @@ export const dataproductsSlice = createSlice({
   },
 });
 
+export const { setDataProductsViewMode, setDataProductsDetailTabValue, resetDataProductsUIState } = dataproductsSlice.actions;
 export default dataproductsSlice.reducer;

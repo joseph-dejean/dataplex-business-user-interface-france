@@ -76,7 +76,7 @@ const AdminAccessManagement = () => {
   const dispatch = useAppDispatch();
   const { showSuccess, showError } = useNotification();
 
-  const { isAdmin, currentUserRole, allAdmins, grantedAccesses } = useAppSelector(
+  const { isDataOwner, hasAdminCapabilities, currentUserRole, allAdmins, grantedAccesses } = useAppSelector(
     (state) => state.admin
   );
 
@@ -84,7 +84,7 @@ const AdminAccessManagement = () => {
   const [loading, setLoading] = useState(true);
   const [pendingRequests, setPendingRequests] = useState<AccessRequest[]>([]);
   const [selectedRequests, setSelectedRequests] = useState<string[]>([]);
-  const [statusFilter, setStatusFilter] = useState<string>('PENDING');
+  const [statusFilter, setStatusFilter] = useState<string>('AWAITING');
   const [accessStatusFilter, setAccessStatusFilter] = useState<string>('all');
   const [projectFilter] = useState<string>('');
 
@@ -97,10 +97,19 @@ const AdminAccessManagement = () => {
   const [newAdminProjects, setNewAdminProjects] = useState('');
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
+  const [singleRejectDialogOpen, setSingleRejectDialogOpen] = useState(false);
+  const [singleRejectRequestId, setSingleRejectRequestId] = useState<string | null>(null);
+  const [singleRejectReason, setSingleRejectReason] = useState('');
+
+  // Statuses that represent "awaiting action" (needs approval or rejection)
+  const AWAITING_STATUSES = ['PENDING', 'PARTIALLY_APPROVED'];
 
   // Client-side filtering
   const filteredRequests = pendingRequests.filter((req) => {
     if (statusFilter === 'all') return true;
+    if (statusFilter === 'AWAITING') {
+      return AWAITING_STATUSES.includes(req.status?.toUpperCase());
+    }
     return req.status?.toUpperCase() === statusFilter.toUpperCase();
   });
 
@@ -331,10 +340,10 @@ const AdminAccessManagement = () => {
     );
   }
 
-  if (!isAdmin) {
+  if (!hasAdminCapabilities) {
     return (
       <Box sx={{ backgroundColor: '#F8FAFD', minHeight: '100vh', p: 3 }}>
-        <Alert severity="error">You do not have admin access. Contact a super-admin to request access.</Alert>
+        <Alert severity="error">You do not have admin access. Contact a super-admin to request access, or request OWNER role on a BigQuery dataset.</Alert>
       </Box>
     );
   }
@@ -351,7 +360,15 @@ const AdminAccessManagement = () => {
             Access Management
           </Typography>
           <Chip
-            label={currentUserRole?.role === 'super-admin' ? 'Super Admin' : 'Project Admin'}
+            label={
+              currentUserRole?.role === 'super-admin'
+                ? 'Super Admin'
+                : currentUserRole?.role === 'project-admin'
+                  ? 'Project Admin'
+                  : isDataOwner
+                    ? 'Data Owner'
+                    : 'Admin'
+            }
             color="primary"
             size="small"
             sx={{ ml: 2 }}
@@ -377,8 +394,10 @@ const AdminAccessManagement = () => {
             <FormControl sx={{ minWidth: 150 }}>
               <InputLabel>Status</InputLabel>
               <Select value={statusFilter} label="Status" onChange={(e) => setStatusFilter(e.target.value)}>
+                <MenuItem value="AWAITING">Awaiting Action</MenuItem>
                 <MenuItem value="all">All</MenuItem>
                 <MenuItem value="PENDING">Pending</MenuItem>
+                <MenuItem value="PARTIALLY_APPROVED">Partially Approved</MenuItem>
                 <MenuItem value="APPROVED">Approved</MenuItem>
                 <MenuItem value="REJECTED">Rejected</MenuItem>
               </Select>
@@ -458,7 +477,7 @@ const AdminAccessManagement = () => {
                             <IconButton size="small" sx={{ backgroundColor: '#E6F4EA', color: '#137333' }} onClick={() => handleApprove(request.id)}>
                               <CheckCircle fontSize="small" />
                             </IconButton>
-                            <IconButton size="small" sx={{ backgroundColor: '#FCE8E6', color: '#C5221F' }} onClick={() => handleReject(request.id)}>
+                            <IconButton size="small" sx={{ backgroundColor: '#FCE8E6', color: '#C5221F' }} onClick={() => { setSingleRejectRequestId(request.id); setSingleRejectReason(''); setSingleRejectDialogOpen(true); }}>
                               <Cancel fontSize="small" />
                             </IconButton>
                           </Box>
@@ -646,12 +665,40 @@ const AdminAccessManagement = () => {
         </DialogActions>
       </Dialog>
 
+      {/* Single Reject Dialog */}
+      <Dialog open={singleRejectDialogOpen} onClose={() => setSingleRejectDialogOpen(false)}>
+        <DialogTitle>Reject Access Request</DialogTitle>
+        <DialogContent>
+          <Typography sx={{ mb: 2 }}>
+            Optionally provide a reason for rejecting this request:
+          </Typography>
+          <TextField
+            fullWidth
+            multiline
+            rows={3}
+            label="Reason (optional)"
+            value={singleRejectReason}
+            onChange={(e) => setSingleRejectReason(e.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSingleRejectDialogOpen(false)}>Cancel</Button>
+          <Button
+            onClick={() => { if (singleRejectRequestId) { handleReject(singleRejectRequestId, singleRejectReason); setSingleRejectDialogOpen(false); } }}
+            color="error"
+            variant="contained"
+          >
+            Reject
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {/* Bulk Reject Dialog */}
       <Dialog open={rejectDialogOpen} onClose={() => setRejectDialogOpen(false)}>
         <DialogTitle>Reject Access Requests</DialogTitle>
         <DialogContent>
           <Typography sx={{ mb: 2 }}>
-            You are about to reject {selectedRequests.length} request(s). Optionally provide a reason:
+            You are about to reject {selectedRequests.length} request(s). You can optionally provide a reason:
           </Typography>
           <TextField
             fullWidth

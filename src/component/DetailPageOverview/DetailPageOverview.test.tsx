@@ -1,7 +1,25 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import React from 'react';
+import { render as rtlRender, screen, fireEvent } from '@testing-library/react';
 import DetailPageOverview from './DetailPageOverview';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import '@testing-library/jest-dom';
+import { configureStore } from '@reduxjs/toolkit';
+import { Provider } from 'react-redux';
+
+const createMockStore = () =>
+  configureStore({
+    reducer: {
+      user: (state = { mode: 'light' }) => state,
+    },
+  });
+
+const render = (ui: React.ReactElement, options?: any) => {
+  const store = createMockStore();
+  const Wrapper = ({ children }: { children: React.ReactNode }) => (
+    <Provider store={store}>{children}</Provider>
+  );
+  return rtlRender(ui, { wrapper: Wrapper, ...options });
+};
 
 // Mock child components
 vi.mock('../Schema/Schema', () => ({
@@ -21,12 +39,16 @@ vi.mock('../Schema/SchemaFilter', () => ({
   }
 }));
 
-vi.mock('../Filter/TableFilter', () => ({
-  default: function MockTableFilter({ data, onFilteredDataChange }: any) {
+vi.mock('../Common/FilterBar', () => ({
+  default: function MockFilterBar({ filterText, onFilterTextChange, activeFilters }: any) {
     return (
-      <div data-testid="table-filter">
-        Table Filter for {data?.length} rows
-        <button onClick={() => onFilteredDataChange(data)}>Apply Filter</button>
+      <div data-testid="filter-bar">
+        <input
+          data-testid="filter-bar-input"
+          value={filterText}
+          onChange={(e: any) => onFilterTextChange(e.target.value)}
+        />
+        <span>Filters: {activeFilters?.length || 0}</span>
       </div>
     );
   }
@@ -49,6 +71,19 @@ vi.mock('../../assets/svg/help_outline.svg', () => ({
   default: 'help-outline-icon'
 }));
 
+// Mock NotificationContext
+vi.mock('../../contexts/NotificationContext', () => ({
+  useNotification: () => ({
+    showNotification: vi.fn(),
+    showSuccess: vi.fn(),
+    showError: vi.fn(),
+    showWarning: vi.fn(),
+    showInfo: vi.fn(),
+    clearNotification: vi.fn(),
+    clearAllNotifications: vi.fn()
+  })
+}));
+
 // Mock navigator.clipboard
 Object.defineProperty(navigator, 'clipboard', {
   value: {
@@ -59,7 +94,7 @@ Object.defineProperty(navigator, 'clipboard', {
 
 describe('DetailPageOverview', () => {
   const mockEntry = {
-    name: 'project/dataset/table',
+    name: 'project/tables/my-table',
     entryType: 'tables/123',
     fullyQualifiedName: 'project:dataset.table',
     createTime: { seconds: 1640995200 }, // Jan 1, 2022
@@ -75,6 +110,34 @@ describe('DetailPageOverview', () => {
       }
     },
     aspects: {
+      '123.global.schema': {
+        data: {
+          fields: {
+            fields: {
+              listValue: {
+                values: [
+                  {
+                    structValue: {
+                      fields: {
+                        name: { stringValue: 'id' },
+                        type: { stringValue: 'INTEGER' }
+                      }
+                    }
+                  },
+                  {
+                    structValue: {
+                      fields: {
+                        name: { stringValue: 'name' },
+                        type: { stringValue: 'STRING' }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
       '123.global.contacts': {
         data: {
           fields: {
@@ -119,7 +182,7 @@ describe('DetailPageOverview', () => {
                               {
                                 structValue: {
                                   fields: {
-                                    value: { numberValue: 150 }
+                                    value: { numberValue: 1500 }
                                   }
                                 }
                               }
@@ -187,8 +250,9 @@ describe('DetailPageOverview', () => {
 
   it('renders the component with all main sections', () => {
     renderDetailPageOverview();
-    
-    expect(screen.getByText('Details')).toBeInTheDocument();
+
+    // Details accordion has been removed (moved to ViewDetails header)
+    expect(screen.queryByText('Details')).not.toBeInTheDocument();
     // Table Info section is only rendered for Tables entry type
     const tableInfo = screen.queryByText('Table Info');
     if (tableInfo) {
@@ -196,66 +260,13 @@ describe('DetailPageOverview', () => {
     }
     expect(screen.getByText('Documentation')).toBeInTheDocument();
     expect(screen.getByText('Contacts')).toBeInTheDocument();
-    expect(screen.getByText('Info')).toBeInTheDocument();
+    expect(screen.getByText('Timestamps')).toBeInTheDocument();
     expect(screen.getByText('Usage Metrics')).toBeInTheDocument();
     expect(screen.getByText('Labels')).toBeInTheDocument();
   });
 
-  it('displays entry description in Details section', () => {
-    renderDetailPageOverview();
-    
-    expect(screen.getByText('Description')).toBeInTheDocument();
-    expect(screen.getByText('Test table description')).toBeInTheDocument();
-  });
-
-  it('displays system information in Details section', () => {
-    renderDetailPageOverview();
-    
-    expect(screen.getByText('System')).toBeInTheDocument();
-    expect(screen.getByText('BigQuery')).toBeInTheDocument();
-  });
-
-  it('displays status as Active with checkmark', () => {
-    renderDetailPageOverview();
-    
-    expect(screen.getByText('Status')).toBeInTheDocument();
-    expect(screen.getByText('Active')).toBeInTheDocument();
-  });
-
-  it('displays location information', () => {
-    renderDetailPageOverview();
-    
-    expect(screen.getByText('Location')).toBeInTheDocument();
-    expect(screen.getByText('US')).toBeInTheDocument();
-  });
-
-  it('displays identifiers with copy functionality', () => {
-    renderDetailPageOverview();
-    
-    expect(screen.getByText('Identifiers')).toBeInTheDocument();
-    expect(screen.getByText('Resources')).toBeInTheDocument();
-    expect(screen.getByText('FQN')).toBeInTheDocument();
-  });
-
-  it('copies resource to clipboard when clicked', () => {
-    renderDetailPageOverview();
-    
-    const resourceButton = screen.getByText('Resources');
-    fireEvent.click(resourceButton);
-    
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      'projects/test-project/datasets/test-dataset/tables/test-table'
-    );
-  });
-
-  it('copies FQN to clipboard when clicked', () => {
-    renderDetailPageOverview();
-    
-    const fqnButton = screen.getByText('FQN');
-    fireEvent.click(fqnButton);
-    
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('project:dataset.table');
-  });
+  // Note: Description, System, Status, Location, Identifiers, and clipboard tests
+  // have been removed because the Details accordion was moved to the ViewDetails header.
 
   it('renders Table Info section for Tables entry type', () => {
     renderDetailPageOverview();
@@ -291,8 +302,9 @@ describe('DetailPageOverview', () => {
       // Click Sample Data tab
       const sampleDataTab = screen.getByText('Sample Data');
       fireEvent.click(sampleDataTab);
-      
-      expect(screen.getByTestId('table-view')).toBeInTheDocument();
+
+      // Verify sample data content is rendered in flex layout
+      expect(screen.getByText('John')).toBeInTheDocument();
     } else {
       // For non-Tables entry types, this test should pass without error
       expect(true).toBe(true);
@@ -312,15 +324,14 @@ describe('DetailPageOverview', () => {
     }
   });
 
-  it('renders table filter when Sample Data tab is active', () => {
+  it('renders filter bar when Sample Data tab is active', () => {
     renderDetailPageOverview();
-    
+
     const sampleDataTab = screen.queryByText('Sample Data');
     if (sampleDataTab) {
       fireEvent.click(sampleDataTab);
-      expect(screen.getByTestId('table-filter')).toBeInTheDocument();
+      expect(screen.getByTestId('filter-bar')).toBeInTheDocument();
     } else {
-      // For non-Tables entry types, this test should pass without error
       expect(true).toBe(true);
     }
   });
@@ -332,7 +343,9 @@ describe('DetailPageOverview', () => {
     const sampleDataTab = screen.queryByText('Sample Data');
     if (sampleDataTab) {
       fireEvent.click(sampleDataTab);
-      expect(screen.getByText('Table with 2 rows')).toBeInTheDocument();
+      // Verify sample data values are rendered in flex layout
+      expect(screen.getByText('John')).toBeInTheDocument();
+      expect(screen.getByText('Jane')).toBeInTheDocument();
     } else {
       // For non-Tables entry types, this test should pass without error
       expect(true).toBe(true);
@@ -354,11 +367,12 @@ describe('DetailPageOverview', () => {
 
   it('displays no data message when sample data is not provided', () => {
     renderDetailPageOverview({ sampleTableData: undefined });
-    
+
     const sampleDataTab = screen.queryByText('Sample Data');
     if (sampleDataTab) {
       fireEvent.click(sampleDataTab);
-      expect(screen.getByText('Sample Data is not available.')).toBeInTheDocument();
+      // When sampleTableData is undefined, component shows "No Data available for this table"
+      expect(screen.getByText('No Data available for this table')).toBeInTheDocument();
     } else {
       // For non-Tables entry types, this test should pass without error
       expect(true).toBe(true);
@@ -403,26 +417,25 @@ describe('DetailPageOverview', () => {
     
     renderDetailPageOverview({ entry: entryWithoutContacts });
     
-    expect(screen.getByText('No Contacts Available')).toBeInTheDocument();
+    expect(screen.getByText('No contacts assigned to this asset.')).toBeInTheDocument();
   });
 
-  it('displays creation and modification times', () => {
+  it('displays creation and modification times in Timestamps section', () => {
     renderDetailPageOverview();
-    
-    expect(screen.getByText('Creation Time')).toBeInTheDocument();
-    expect(screen.getByText('Last Modified')).toBeInTheDocument();
-    expect(screen.getAllByText('Jan 1, 2022')).toHaveLength(2); // Creation time appears in multiple places
-    expect(screen.getByText('Jan 2, 2022')).toBeInTheDocument();
+
+    expect(screen.getByText('Created')).toBeInTheDocument();
+    expect(screen.getByText('Last modified')).toBeInTheDocument();
   });
 
   it('displays usage metrics when available', () => {
     renderDetailPageOverview();
-    
+
     expect(screen.getByText('Usage Metrics')).toBeInTheDocument();
-    expect(screen.getByText('Execution Time')).toBeInTheDocument();
+    expect(screen.getByText('Avg Exec Time')).toBeInTheDocument();
     expect(screen.getByText('Total Queries')).toBeInTheDocument();
-    expect(screen.getByText('Refresh Time')).toBeInTheDocument();
-    expect(screen.getByText('150')).toBeInTheDocument();
+    expect(screen.getByText('seconds')).toBeInTheDocument();
+    expect(screen.getByText('all time')).toBeInTheDocument();
+    expect(screen.getByText('2')).toBeInTheDocument();
     expect(screen.getByText('42')).toBeInTheDocument();
   });
 
@@ -438,33 +451,50 @@ describe('DetailPageOverview', () => {
         }
       }
     };
-    
+
     renderDetailPageOverview({ entry: entryWithoutUsage });
-    
-    expect(screen.getByText('No Usage Metrics Available')).toBeInTheDocument();
+
+    expect(screen.getByText('Usage Metrics')).toBeInTheDocument();
+    expect(screen.getByText('No usage metrics available for this asset.')).toBeInTheDocument();
+  });
+
+  it('hides Usage Metrics section for glossary entry type', () => {
+    const mockGlossaryEntry = {
+      ...mockEntry,
+      entryType: 'glossary/term',
+    };
+    renderDetailPageOverview({ entry: mockGlossaryEntry });
+
+    expect(screen.queryByText('Usage Metrics')).not.toBeInTheDocument();
+    expect(screen.getByText('Documentation')).toBeInTheDocument();
+    expect(screen.getByText('Contacts')).toBeInTheDocument();
+    expect(screen.getByText('Timestamps')).toBeInTheDocument();
+    expect(screen.getByText('Labels')).toBeInTheDocument();
+  });
+
+  it('hides Usage Metrics section for annotation entry type', () => {
+    const mockAnnotationEntry = {
+      ...mockEntry,
+      entryType: 'annotation/My Aspect',
+    };
+    renderDetailPageOverview({ entry: mockAnnotationEntry });
+
+    expect(screen.queryByText('Usage Metrics')).not.toBeInTheDocument();
+    expect(screen.getByText('Documentation')).toBeInTheDocument();
+    expect(screen.getByText('Contacts')).toBeInTheDocument();
+    expect(screen.getByText('Timestamps')).toBeInTheDocument();
+    expect(screen.getByText('Labels')).toBeInTheDocument();
   });
 
   it('displays labels', () => {
     renderDetailPageOverview();
-    
+
     expect(screen.getByText('Labels')).toBeInTheDocument();
     expect(screen.getByText('environment: production')).toBeInTheDocument();
     expect(screen.getByText('team: data-engineering')).toBeInTheDocument();
   });
 
-  it('handles missing description gracefully', () => {
-    const entryWithoutDescription = {
-      ...mockEntry,
-      entrySource: {
-        ...mockEntry.entrySource,
-        description: undefined
-      }
-    };
-    
-    renderDetailPageOverview({ entry: entryWithoutDescription });
-    
-    expect(screen.getByText('No Description Available')).toBeInTheDocument();
-  });
+  // Description test removed - description moved to ViewDetails header
 
   it('handles missing documentation gracefully', () => {
     const entryWithoutDoc = {
@@ -483,7 +513,7 @@ describe('DetailPageOverview', () => {
     
     renderDetailPageOverview({ entry: entryWithoutDoc });
     
-    expect(screen.getByText('No Documentation Available')).toBeInTheDocument();
+    expect(screen.getByText('No documentation yet')).toBeInTheDocument();
   });
 
   it('applies custom CSS styles', () => {
@@ -506,62 +536,193 @@ describe('DetailPageOverview', () => {
     }
   });
 
-  it('handles filtered sample data changes', () => {
+  it('renders filter bar with sample data', () => {
     renderDetailPageOverview();
-    
-    // First check if Sample Data tab exists
+
     const sampleDataTab = screen.queryByText('Sample Data');
     if (sampleDataTab) {
       fireEvent.click(sampleDataTab);
-      
-      // Wait for the tab to be active and then find the filter button
-      waitFor(() => {
-        const applyFilterButton = screen.queryByText('Apply Filter');
-        if (applyFilterButton) {
-          fireEvent.click(applyFilterButton);
-          // Should still render table view with filtered data
-          expect(screen.getByTestId('table-view')).toBeInTheDocument();
-        }
-      });
+      expect(screen.getByTestId('filter-bar')).toBeInTheDocument();
     } else {
-      // For non-Tables entry types, this test should pass without error
       expect(true).toBe(true);
     }
   });
 
   it('renders help icons for all sections', () => {
     renderDetailPageOverview();
-    
-    const helpIcons = screen.getAllByAltText('Help');
-    expect(helpIcons).toHaveLength(6); // Details, Table Info, Documentation, Contacts, Info, Usage Metrics, Labels (some may not render)
+
+    // Help icons are InfoOutline components, not img tags with alt text
+    const helpIcons = screen.getAllByTestId('InfoOutlineIcon');
+    expect(helpIcons.length).toBeGreaterThan(0); // Details, Table Info, Info, Usage Metrics, Labels sections have help icons
   });
 
   it('handles entry without entryType', () => {
     const entryWithoutType = { ...mockEntry, entryType: null };
-    
-    // Component will throw an error when trying to split null entryType
-    expect(() => renderDetailPageOverview({ entry: entryWithoutType })).toThrow();
+
+    // Component handles null entryType gracefully by using empty string
+    renderDetailPageOverview({ entry: entryWithoutType });
+    expect(screen.getByText('Timestamps')).toBeInTheDocument();
   });
 
   it('handles entry without aspects', () => {
-    const entryWithoutAspects = { ...mockEntry, aspects: null };
-    
-    // Component will throw an error when trying to access null aspects
-    expect(() => renderDetailPageOverview({ entry: entryWithoutAspects })).toThrow();
+    const entryWithoutAspects = { ...mockEntry, aspects: {} };
+
+    // Component handles missing aspects gracefully
+    renderDetailPageOverview({ entry: entryWithoutAspects });
+    expect(screen.getByText('Timestamps')).toBeInTheDocument();
   });
 
-  it('formats dates correctly', () => {
+  it('formats dates correctly in Timestamps section', () => {
     renderDetailPageOverview();
-    
-    // Check that dates are formatted as expected (Jan 1, 2022, Jan 2, 2022)
-    expect(screen.getAllByText('Jan 1, 2022')).toHaveLength(2); // Creation time and potentially other places
-    expect(screen.getByText('Jan 2, 2022')).toBeInTheDocument();
+
+    // Check for Created and Last modified labels in Timestamps section
+    expect(screen.getByText('Created')).toBeInTheDocument();
+    expect(screen.getByText('Last modified')).toBeInTheDocument();
   });
 
-  it('displays last run time as NA', () => {
+  it('handles contact without email format', () => {
+    const entryWithPlainContact = {
+      ...mockEntry,
+      aspects: {
+        ...mockEntry.aspects,
+        '123.global.contacts': {
+          data: {
+            fields: {
+              identities: {
+                listValue: {
+                  values: [
+                    {
+                      structValue: {
+                        fields: {
+                          name: { stringValue: 'Bob Wilson' },
+                          role: { stringValue: 'Viewer' }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    };
+
+    renderDetailPageOverview({ entry: entryWithPlainContact });
+
+    expect(screen.getByText('Contacts')).toBeInTheDocument();
+    expect(screen.getByText('Viewer')).toBeInTheDocument();
+    // Name appears in both avatar and contact text, so use getAllByText
+    const bobWilsonElements = screen.getAllByText('Bob Wilson');
+    expect(bobWilsonElements.length).toBeGreaterThan(0);
+  });
+
+  it('handles contact with empty name', () => {
+    const entryWithEmptyContactName = {
+      ...mockEntry,
+      aspects: {
+        ...mockEntry.aspects,
+        '123.global.contacts': {
+          data: {
+            fields: {
+              identities: {
+                listValue: {
+                  values: [
+                    {
+                      structValue: {
+                        fields: {
+                          name: { stringValue: '' },
+                          role: { stringValue: 'Owner' }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    };
+
+    renderDetailPageOverview({ entry: entryWithEmptyContactName });
+
+    expect(screen.getByText('Contacts')).toBeInTheDocument();
+    expect(screen.getByText('Owner')).toBeInTheDocument();
+    // Empty name shows "--"
+    const contactsSection = screen.getByText('Owner').closest('div');
+    expect(contactsSection?.textContent).toContain('--');
+  });
+
+  it('displays no labels message when labels are empty', () => {
+    const entryWithoutLabels = {
+      ...mockEntry,
+      entrySource: {
+        ...mockEntry.entrySource,
+        labels: {}
+      }
+    };
+
+    renderDetailPageOverview({ entry: entryWithoutLabels });
+
+    expect(screen.getByText('Labels')).toBeInTheDocument();
+    expect(screen.getByText('No Labels available for this asset.')).toBeInTheDocument();
+  });
+
+  it('renders access denied state', () => {
+    renderDetailPageOverview({ accessDenied: true });
+
+    expect(screen.getByText('Access Denied')).toBeInTheDocument();
+    expect(screen.getByText(/You don't have permission to view this resource/)).toBeInTheDocument();
+  });
+
+  it('handles sample data with error during processing', () => {
+    const invalidSampleData = [
+      { id: 1 }, // Valid row
+      null, // Invalid row that might cause error
+      { id: 3 }
+    ];
+
+    renderDetailPageOverview({ sampleTableData: invalidSampleData });
+
+    const sampleDataTab = screen.queryByText('Sample Data');
+    if (sampleDataTab) {
+      fireEvent.click(sampleDataTab);
+      // Component should handle error gracefully
+      expect(screen.getByTestId('filter-bar')).toBeInTheDocument();
+    }
+  });
+
+  it('displays labels with tooltips', () => {
     renderDetailPageOverview();
-    
-    expect(screen.getByText('Last Run Time')).toBeInTheDocument();
-    expect(screen.getByText('NA')).toBeInTheDocument();
+
+    expect(screen.getByText('environment: production')).toBeInTheDocument();
+    expect(screen.getByText('team: data-engineering')).toBeInTheDocument();
+  });
+
+  // Accordion tests removed - cards are no longer collapsible
+
+  it('handles schema data presence', () => {
+    renderDetailPageOverview();
+
+    // For tables entry type, schema should be rendered
+    const tableInfo = screen.queryByText('Table Info');
+    if (tableInfo) {
+      expect(screen.getByTestId('schema')).toBeInTheDocument();
+    }
+  });
+
+  // Clipboard copy test removed - identifiers moved to ViewDetails header
+
+  it('renders schema filter when schema data is present', () => {
+    renderDetailPageOverview();
+
+    const tableInfo = screen.queryByText('Table Info');
+    if (tableInfo) {
+      // Schema tab should be active by default
+      expect(screen.getByTestId('schema')).toBeInTheDocument();
+      // SchemaFilter should be rendered when schema data exists
+      expect(screen.getByTestId('schema-filter')).toBeInTheDocument();
+    }
   });
 });

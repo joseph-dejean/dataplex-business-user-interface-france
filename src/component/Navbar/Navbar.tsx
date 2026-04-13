@@ -1,5 +1,4 @@
-import React from 'react';
-import { useEffect } from 'react';
+import React, { useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
@@ -12,7 +11,8 @@ import Avatar from '@mui/material/Avatar';
 import Tooltip from '@mui/material/Tooltip';
 import MenuItem from '@mui/material/MenuItem';
 import './Navbar.css'
-import { HelpOutline, MenuBook, Home, Logout, Menu as MenuIcon, Security, Business } from '@mui/icons-material';
+import { Menu as MenuIcon } from '@mui/icons-material';
+import FeedbackOutlinedIcon from '@mui/icons-material/FeedbackOutlined';
 import SearchBar from '../SearchBar/SearchBar';
 import { useDispatch, useSelector } from 'react-redux';
 import type { AppDispatch } from '../../app/store';
@@ -21,6 +21,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthProvider';
 import SendFeedback from './SendFeedback';
 import NotificationBar from '../SearchPage/NotificationBar';
+import UserAccountDropdown from './UserAccountDropdown';
 import NotificationCenter from './NotificationCenter';
 
 /**
@@ -55,38 +56,6 @@ import NotificationCenter from './NotificationCenter';
  */
 
 //const pages = ['Guide', 'Notification', 'Help'];
-const settings = ['Home', 'Integrations'];
-
-// Icon mapping for menu items
-const getMenuIcon = (setting: string) => {
-  switch (setting) {
-    case 'Home':
-      return <Home sx={{
-        mr: "0.25rem",
-        fontSize: "1.25rem", // 20px
-        color: "#5F6367"
-      }} />;
-    case 'Integrations':
-      return <Business sx={{
-        mr: "0.25rem",
-        fontSize: "1.25rem", // 20px
-        color: "#5F6367"
-      }} />;
-    default:
-      return null;
-  }
-};
-
-const getNavPath = (setting: string) => {
-  switch (setting) {
-    case 'Home':
-      return '/home';
-    case 'Integrations':
-      return '/settings';
-    default:
-      return '/';
-  }
-};
 
 interface NavBarProps {
   searchBar?: boolean; // Optional prop to control the visibility of the search bar
@@ -94,48 +63,55 @@ interface NavBarProps {
 }
 
 const Navbar: React.FC<NavBarProps> = ({ searchBar = false, searchNavigate = true }) => {
-  const { user, logout, updateUser } = useAuth();
-  const { name, picture } = user ?? { name: '', picture: '' };
+  const { user, updateUser } = useAuth();
+  const { name, picture, email } = user ?? {name: '', picture:'', email: ''};
   const navigate = useNavigate();
   const location = useLocation();
   const dispatch = useDispatch<AppDispatch>();
-  const isGlossaryPage = ['/glossaries'].includes(location.pathname);
-  const isBrowsePage = ['/browse-by-annotation'].includes(location.pathname);
-  const isSearchOrDetailPage = ['/search', '/view-details'].includes(location.pathname);
-  const isGuidePage = ['/guide'].includes(location.pathname);
-  const isDataProductsPage = location.pathname.startsWith('/data-product');
+  const mode = useSelector((state: any) => state.user.mode);
+  const isSearchFiltersOpen = useSelector((state: any) => state.search.isSearchFiltersOpen);
+  const isSideNavOpen = useSelector((state: any) => state.search.isSideNavOpen);
+  const isOnSearchPage = location.pathname === '/search';
+  const isOnAspectsPage = location.pathname === '/browse-by-annotation';
+  const isOnGlossariesPage = location.pathname === '/glossaries';
+  const shouldShiftNavbar = (isOnSearchPage && isSearchFiltersOpen) || ((isOnAspectsPage || isOnGlossariesPage) && isSideNavOpen);
+  const iconColor = mode === 'dark' ? '#9aa0a6' : '#5F6367';
   const [anchorElNav, setAnchorElNav] = React.useState<null | HTMLElement>(null);
   const [anchorElUser, setAnchorElUser] = React.useState<null | HTMLElement>(null);
+  //const [anchorElHelp, setAnchorElHelp] = React.useState<null | HTMLElement>(null);
   const [openFeedback, setOpenFeedback] = React.useState<boolean>(false);
-  const searchTerm = useSelector((state: any) => state.search.searchTerm);
-  const searchFilters = useSelector((state: any) => state.search.searchFilters);
-  const semanticSearch = useSelector((state: any) => state.search.semanticSearch);
+  const searchFilters = useSelector((state:any) => state.search.searchFilters);
+  const semanticSearch = useSelector((state:any) => state.search.semanticSearch);
   const id_token = user?.token || '';
   const [isNotificationVisible, setIsNotificationVisible] = React.useState<boolean>(false);
   const [notificationMessage, setNotificationMessage] = React.useState<string>('');
-
   const handleLogoClick = () => {
     if (user) {
       const userData = {
-        name: user.name ?? "",
-        email: user.email ?? "",
-        picture: user.picture ?? "",
-        token: user.token ?? "",
-        hasRole: user.hasRole ?? false,
-        roles: user.roles ?? [],
-        permissions: user.permissions ?? [],
-        appConfig: {},
-        role: user.role ?? null,
-        isAdmin: user.isAdmin ?? false
+        name: user.name,
+        email: user.email,
+        picture: user.picture,
+        token: user.token,
+        tokenExpiry: user.tokenExpiry,
+        tokenIssuedAt: user.tokenIssuedAt,
+        hasRole: user.hasRole,
+        roles: user.roles,
+        permissions: user.permissions,
+        iamDisplayRole: user.iamDisplayRole,
+        appConfig: {}
       };
       updateUser(user.token, userData);
     }
     navigate('/home');
   };
-
-  useEffect(() => {
-    dispatch(searchResourcesByTerm({ term: searchTerm, id_token: id_token, semanticSearch: semanticSearch, userEmail: user?.email }));
-  }, []);
+  
+  const dataSearch = useMemo(() => [
+    { name: 'BigQuery' },
+    { name: 'Data Warehouse' },
+    { name: 'Data Lake' },
+    { name: 'Data Pipeline' },
+    { name: 'GCS' }
+  ], []);
 
   const handleOpenNavMenu = (event: React.MouseEvent<HTMLElement>) => {
     setAnchorElNav(event.currentTarget);
@@ -152,9 +128,28 @@ const Navbar: React.FC<NavBarProps> = ({ searchBar = false, searchNavigate = tru
     setAnchorElUser(null);
   };
 
+  // const handleOpenHelpMenu = (event: React.MouseEvent<HTMLElement>) => {
+  //   setAnchorElHelp(event.currentTarget);
+  // };
   const handleOpenFeedback = () => {
     setOpenFeedback(true);
   };
+
+  // const handleCloseHelpMenu = () => {
+  //   setAnchorElHelp(null);
+  // };
+
+  // This handler closes the new help menu, the main mobile menu (if open),
+  // and navigates if a path is provided.
+  // const handleHelpMenuAction = (path: string | null) => {
+  //   if (path) {
+  //     navigate(path);
+  //   }
+  //   handleCloseHelpMenu();
+  //   if (anchorElNav) { // Check if the mobile nav menu is open
+  //     handleCloseNavMenu();
+  //   }
+  // };
 
   const handleCloseFeedback = () => {
     setOpenFeedback(false);
@@ -172,7 +167,7 @@ const Navbar: React.FC<NavBarProps> = ({ searchBar = false, searchNavigate = tru
     setOpenFeedback(false);
     setNotificationMessage(`Feedback sent`);
     setIsNotificationVisible(true);
-
+    
     // Auto-hide notification after 5 seconds
     setTimeout(() => {
       setIsNotificationVisible(false);
@@ -182,345 +177,292 @@ const Navbar: React.FC<NavBarProps> = ({ searchBar = false, searchNavigate = tru
 
   const handleNavSearch = (text: string) => {
     dispatch({ type: 'resources/setItemsStoreData', payload: [] });
-    dispatch(searchResourcesByTerm({ term: text, id_token: id_token, filters: searchFilters, semanticSearch: semanticSearch, userEmail: user?.email }));
+    dispatch(searchResourcesByTerm({term : text, id_token: id_token, filters: searchFilters, semanticSearch: semanticSearch}));
     searchNavigate && navigate('/search');
   }
 
-  return (
-    <>
-      <AppBar position="static" sx={{
-        background: "#F8FAFD",
-        boxShadow: "none",
-        height: "4rem", // 64px
-        flex: "0 0 auto",
+  return (<>
+    <AppBar position="static" sx={{
+      background: mode === 'dark' ? '#131314' : '#FFFFFF',
+      boxShadow: "none",
+      height: "4.5rem", // 72px
+      flex: "0 0 auto",
+      marginLeft: shouldShiftNavbar ? '252px' : '0px',
+      width: shouldShiftNavbar ? 'calc(100% - 252px)' : '100%',
+      transition: 'margin-left 0.3s ease-in-out, width 0.3s ease-in-out',
+    }}>
+      <Container maxWidth="xl" sx={{
+        padding: 0, 
+        margin: 0, 
+        flex: "1 1 auto", 
+        width: "100%", 
+        maxWidth: "none !important",
+        height: "100%"
       }}>
-        <Container maxWidth="xl" sx={{
-          padding: 0,
-          margin: 0,
+        <Toolbar disableGutters sx={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
           flex: "1 1 auto",
-          width: "100%",
-          maxWidth: "none !important",
-          height: "100%"
+          minHeight: "4.5rem",
+          height: "100%",
+          padding: "0.75rem 0rem",
+          gap: "2rem", // 32px
         }}>
-          <Toolbar disableGutters sx={{
+          {/* Left Section - Logo */}
+          <Box onClick={handleLogoClick} sx={{
+            display: { xs: 'none', md: 'flex' },
+            flex: "0 0 auto",
+            width: "140px",
+            height: "39px",
+            cursor: "pointer",
+            marginLeft: '-10px',
+          }}>
+            <img
+              src="/assets/svg/knowledge-catalog-logo.svg"
+              alt="Knowledge Catalog"
+              style={{ width: '140px', height: '39px' }}
+            />
+          </Box>
+          
+          {/* Center Section - Search Bar */}
+          {
+            searchBar && location.pathname !== '/admin-panel' ?
+            (
+              <Box sx={{
+                display: { lg: 'flex' },
+                flex: "1 1 41rem",
+                alignItems: "center",
+                justifyContent: "flex-start",
+                height: "3rem",
+              }}>
+                <div style={{ width: 'calc(100% - 10.2%)', marginLeft: '0' }}>
+                  <SearchBar
+                    handleSearchSubmit={handleNavSearch}
+                    dataSearch={dataSearch}
+                    variant="navbar"
+                  />
+                </div>
+              </Box>
+            ) : (
+              <Box sx={{ flex: "1 1 auto" }} />
+            )
+          }
+ 
+         {/* Mobile Navigation */}
+          <Box sx={{ 
+            flex: "0 0 auto", 
+            display: { xs: 'flex', md: 'none' },
+            alignItems: "center",
+            gap: "1rem"
+          }}>
+            <IconButton
+              size="large"
+              aria-label="account of current user"
+              aria-controls="menu-appbar"
+              aria-haspopup="true"
+              onClick={handleOpenNavMenu}
+              sx={{
+                color: iconColor,
+                p: "0.25rem"
+              }}
+            >
+              <MenuIcon />
+            </IconButton>
+            <Menu
+              id="menu-appbar"
+              anchorEl={anchorElNav}
+              anchorOrigin={{
+                vertical: 'bottom',
+                horizontal: 'left',
+              }}
+              keepMounted
+              transformOrigin={{
+                vertical: 'top',
+                horizontal: 'left',
+              }}
+              open={Boolean(anchorElNav)}
+              onClose={handleCloseNavMenu}
+              sx={{ display: { xs: 'block', md: 'none' } }}
+            >
+              {/* <MenuItem onClick={() => { handleCloseNavMenu(); navigate('/admin-panel'); }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: "0.5rem" }}>
+                  <AdminPanelSettings sx={{ fontSize: "1.25rem", color: "#5F6367" }} />
+                  <Typography sx={{ fontSize: "0.875rem", fontWeight: 500 }}>Admin Panel</Typography>
+                </Box>
+              </MenuItem> */}
+              <MenuItem onClick={()=>{handleCloseNavMenu(); navigate('/guide')}}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: "0.5rem" }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: '24px', color: mode === 'dark' ? '#c4c7c5' : '#444746', fontVariationSettings: "'FILL' 1" }}>menu_book</span>
+                  <Typography sx={{ fontSize: "0.875rem", fontWeight: 500 }}>Guide</Typography>
+                </Box>
+              </MenuItem>
+              {/* <MenuItem onClick={handleCloseNavMenu}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: "0.5rem" }}>
+                  <NotificationsNone sx={{ fontSize: "1.25rem", color: "#5F6367" }} />
+                  <Typography sx={{ fontSize: "0.875rem", fontWeight: 500 }}>Notifications</Typography>
+                </Box>
+              </MenuItem> */}
+              <MenuItem onClick={handleOpenFeedback}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: "0.5rem" }}>
+                  <FeedbackOutlinedIcon sx={{ fontSize: '24px', color: mode === 'dark' ? '#c4c7c5' : '#444746' }} />
+                  <Typography sx={{ fontSize: "0.875rem", fontWeight: 500 }}>Feedback</Typography>
+                </Box>
+              </MenuItem>
+            </Menu>
+          </Box>
+          
+          {/* Mobile Logo */}
+          <Box onClick={handleLogoClick} sx={{
+            display: { xs: 'flex', md: 'none' },
+            flex: "1 1 auto",
+            justifyContent: "center",
+            alignItems: "center",
+            height: "2rem"
+          }}>
+            <div className="logo-container" style={{display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
+              <div style={{display: 'flex', flexDirection: 'column', alignItems: 'flex-start', cursor: "pointer",}}>
+                <label style={{fontSize:"19px", fontWeight:700, color: mode === 'dark' ? '#c4c7c5' : "#0B57D0", lineHeight: 1, cursor: "pointer",}}>Knowledge</label>
+                <label style={{fontSize:"12px", fontWeight:700, color: mode === 'dark' ? '#c4c7c5' : "#0B57D0", lineHeight: 1, cursor: "pointer",}}>Catalog</label>
+              </div>
+            </div>
+          </Box>
+          {/* Right Section - Icons and Avatar */}
+          <Box sx={{ 
+            flex: "0 0 auto",
             display: "flex",
             alignItems: "center",
-            flex: "1 1 auto",
-            minHeight: "4rem",
-            height: "100%",
-            padding: "0.5rem 0rem", // 8px 20px
-            gap: 0,
+            justifyContent: "flex-end",
+            gap: "8px",
+            padding: "0.375rem 0" // 6px vertical padding
           }}>
-            {/* Left Section - Logo */}
-            <Box onClick={handleLogoClick} sx={{
-              display: { xs: 'none', md: 'flex' },
-              alignItems: 'center',
-              gap: '8px',
-              flex: "0 0 auto",
-              marginLeft: "1rem",
-              cursor: "pointer",
-              minWidth: '200px'
-            }}>
-              <img
-                src="/assets/svg/dataplex-logo-icon.svg"
-                alt="Dataplex"
-                style={{ width: '28px', height: '28px' }}
-              />
-              <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-                <Typography sx={{
-                  fontFamily: '"Google Sans", sans-serif',
-                  fontSize: '16px',
-                  fontWeight: 600,
-                  color: '#0B57D0',
-                  lineHeight: 1.2,
-                }}>
-                  Dataplex
-                </Typography>
-                <Typography sx={{
-                  fontFamily: '"Google Sans", sans-serif',
-                  fontSize: '11px',
-                  fontWeight: 500,
-                  color: '#0B57D0',
-                  lineHeight: 1.2,
-                }}>
-                  Catalog France Practice
-                </Typography>
-              </Box>
-            </Box>
-
-            {/* Center Section - Search Bar */}
-            {
-              searchBar && location.pathname !== '/admin-panel' ?
-                (
-                  <Box sx={{
-                    display: { lg: 'flex' },
-                    flex: "1 1 41rem",
-                    alignItems: "center",
-                    justifyContent: "flex-start",
-                    height: "3rem",
-                    margin: "0",
-                    ...(isGlossaryPage && {
-                      marginLeft: "calc(250px)", // Logo width + padding
-                    }),
-                    ...(isBrowsePage && {
-                      marginLeft: "202px",
-                    }),
-                    ...(isSearchOrDetailPage && {
-                      marginLeft: "202px",
-                    }),
-                    ...(isGuidePage && {
-                      marginLeft: "calc(250px)",
-                    }),
-                    ...(isDataProductsPage && {
-                      marginLeft: "calc(250px)",
-                    })
-                  }}>
-                    <div style={{ width: 'calc(100% - 10.2%)', marginLeft: '0' }}>
-                      <SearchBar
-                        handleSearchSubmit={handleNavSearch}
-                        dataSearch={[
-                          { name: 'BigQuery' },
-                          { name: 'Data Warehouse' },
-                          { name: 'Data Lake' },
-                          { name: 'Data Pipeline' },
-                          { name: 'GCS' }
-                        ]}
-                        variant="navbar"
-                      />
-                    </div>
-                  </Box>
-                ) : (
-                  <Box sx={{ flex: "1 1 auto" }} />
-                )
-            }
-
-            {/* Mobile Navigation */}
+            {/* Icon Button Area */}
             <Box sx={{
-              flex: "0 0 auto",
-              display: { xs: 'flex', md: 'none' },
-              alignItems: "center",
-              gap: "1rem"
-            }}>
-              <IconButton
-                size="large"
-                aria-label="account of current user"
-                aria-controls="menu-appbar"
-                aria-haspopup="true"
-                onClick={handleOpenNavMenu}
-                sx={{
-                  color: "#5F6367",
-                  p: "0.25rem"
-                }}
-              >
-                <MenuIcon />
-              </IconButton>
-              <Menu
-                id="menu-appbar"
-                anchorEl={anchorElNav}
-                anchorOrigin={{
-                  vertical: 'bottom',
-                  horizontal: 'left',
-                }}
-                keepMounted
-                transformOrigin={{
-                  vertical: 'top',
-                  horizontal: 'left',
-                }}
-                open={Boolean(anchorElNav)}
-                onClose={handleCloseNavMenu}
-                sx={{ display: { xs: 'block', md: 'none' } }}
-              >
-                <MenuItem onClick={() => { handleCloseNavMenu(); navigate('/guide') }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: "0.5rem" }}>
-                    <MenuBook sx={{ fontSize: "1.25rem", color: "#5F6367" }} />
-                    <Typography sx={{ fontSize: "0.875rem", fontWeight: 500 }}>Guide</Typography>
-                  </Box>
-                </MenuItem>
-                <MenuItem onClick={handleOpenFeedback}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: "0.5rem" }}>
-                    <HelpOutline sx={{ fontSize: "1.25rem", color: "#5F6367" }} />
-                    <Typography sx={{ fontSize: "0.875rem", fontWeight: 500 }}>Help</Typography>
-                  </Box>
-                </MenuItem>
-              </Menu>
-            </Box>
-
-            {/* Mobile Logo */}
-            <Box onClick={handleLogoClick} sx={{
-              display: { xs: 'flex', md: 'none' },
-              flex: "1 1 auto",
-              justifyContent: "center",
-              alignItems: "center",
-              height: "2rem"
-            }}>
-              <div className="logo-container" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <img src="/assets/svg/dataplex-logo-icon.svg" alt="Dataplex Icon" style={{ width: 24, height: 24 }} />
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', cursor: "pointer", }}>
-                  <label style={{ fontSize: "19px", fontWeight: 700, color: "#0B57D0", lineHeight: 1, cursor: "pointer", }}>Dataplex</label>
-                  <label style={{ fontSize: "12px", fontWeight: 700, color: "#0B57D0", lineHeight: 1, cursor: "pointer", }}>Universal Catalog</label>
-                </div>
-              </div>
-            </Box>
-
-            {/* Right Section - Icons and Avatar */}
-            <Box sx={{
-              flex: "1 1 auto",
               display: "flex",
-              alignItems: "center",
-              justifyContent: "flex-end",
-              gap: "1.25rem", // 20px
-              padding: "0.375rem 0" // 6px vertical padding
+              alignItems: "center", 
+              gap: "0px",
+              height: "2.125rem" // 34px
             }}>
-              <Box sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: "1.25rem", // 20px
-                height: "2.125rem" // 34px
-              }}>
-                <Tooltip title="Guide">
-                  <IconButton sx={{
-                    p: 0,
+              {/* <Tooltip title="Admin Panel">
+                <IconButton 
+                  onClick={() => navigate('/admin-panel')}
+                  sx={{ 
+                    p: 0, 
                     width: "1.5rem", // 24px
                     height: "1.5rem" // 24px
                   }}
-                    onClick={() => { navigate('/guide') }}
-                  >
-                    <MenuBook sx={{
-                      fontSize: "1.5rem",
-                      color: "#5F6368"
-                    }} />
-                  </IconButton>
-                </Tooltip>
-                <Tooltip title="Help">
-                  <IconButton sx={{
+                >
+                  <AdminPanelSettings sx={{ 
+                    fontSize: "1.5rem", 
+                    color: "#5F6367" 
+                  }} />
+                </IconButton>
+              </Tooltip> */}
+              <Tooltip title="Guide" slotProps={{ popper: { modifiers: [{ name: 'offset', options: { offset: [0, -10] } }] } }}>
+                <IconButton sx={{
                     p: 0,
-                    width: "1.5rem", // 24px
-                    height: "1.5rem" // 24px
+                    width: '40px',
+                    height: '40px',
+                    borderRadius: '50%',
+                    transition: 'background-color 0.2s',
+                    '&:hover': { backgroundColor: mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : '#e1e1e1' },
                   }}
-                    onClick={handleOpenFeedback}
-                  >
-                    <HelpOutline sx={{
-                      fontSize: "1.5rem",
-                      color: "#5F6368"
-                    }} />
-                  </IconButton>
-                </Tooltip>
-                <NotificationCenter />
-              </Box>
-
-              {/* Avatar */}
-              <Tooltip title="Open settings">
-                <IconButton onClick={handleOpenUserMenu} sx={{ p: 0 }}>
-                  <Avatar
-                    alt={name ?? ""}
-                    src={picture ?? ""}
-                    sx={{
-                      width: "2rem", // 32px
-                      height: "2rem", // 32px
-                      borderRadius: "50%"
-                    }}
-                  />
+                  onClick={()=>{navigate('/guide')}}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: '24px', color: mode === 'dark' ? '#c4c7c5' : '#444746', fontVariationSettings: "'FILL' 1" }}>menu_book</span>
                 </IconButton>
               </Tooltip>
-              <Menu
-                sx={{ mt: "2.8125rem" }} // 45px
-                id="menu-appbar"
-                anchorEl={anchorElUser}
-                anchorOrigin={{
-                  vertical: 'top',
-                  horizontal: 'right',
-                }}
-                keepMounted
-                transformOrigin={{
-                  vertical: 'top',
-                  horizontal: 'right',
-                }}
-                open={Boolean(anchorElUser)}
-                onClose={handleCloseUserMenu}
-              >
-                {settings.map((setting) => (
-                  <MenuItem key={setting} onClick={() => { handleCloseUserMenu(); navigate(getNavPath(setting)); }}>
-                    <Box sx={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: "0.25rem"
-                    }}>
-                      {getMenuIcon(setting)}
-                      <Typography sx={{
-                        textAlign: 'center',
-                        fontSize: "0.875rem", // 14px
-                        fontWeight: 500,
-                        lineHeight: 1.43
-                      }}>
-                        {setting}
-                      </Typography>
-                    </Box>
-                  </MenuItem>
-                ))}
-
-                {/* Access Management Link */}
-                <MenuItem key="AccessManagement" onClick={() => { handleCloseUserMenu(); navigate('/admin-access'); }}>
-                  <Box sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: "0.25rem"
-                  }}>
-                    <Security sx={{ fontSize: "1.25rem", color: "#5F6367" }} />
-                    <Typography sx={{
-                      textAlign: 'center',
-                      fontSize: "0.875rem", // 14px
-                      fontWeight: 500,
-                      lineHeight: 1.43
-                    }}>
-                      Access Management
-                    </Typography>
-                  </Box>
-                </MenuItem>
-
-                <MenuItem key="SignOut" onClick={() => {
-                  sessionStorage.removeItem('welcomeShown');
-                  logout();
+              {/* <Tooltip title="Notification">
+                <IconButton sx={{
+                  p: 0,
+                  width: "1.5rem", // 24px
+                  height: "1.5rem" // 24px
                 }}>
-                  <Box sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: "0.25rem"
-                  }}>
-                    <Logout sx={{
-                      fontSize: "1.25rem", // 20px
-                      color: "#5F6367"
-                    }} />
-                    <Typography sx={{
-                      textAlign: 'center',
-                      fontSize: "0.875rem", // 14px
-                      fontWeight: 500,
-                      lineHeight: 1.43
-                    }}>
-                      SignOut
-                    </Typography>
-                  </Box>
-                </MenuItem>
-              </Menu>
+                  <NotificationsNone sx={{
+                    fontSize: "1.5rem",
+                    color: "#5F6367"
+                  }} />
+                </IconButton>
+              </Tooltip> */}
+              <NotificationCenter />
+              <Tooltip title="Feedback" slotProps={{ popper: { modifiers: [{ name: 'offset', options: { offset: [0, -10] } }] } }}>
+                <IconButton sx={{
+                    p: 0,
+                    width: '40px',
+                    height: '40px',
+                    borderRadius: '50%',
+                    transition: 'background-color 0.2s',
+                    '&:hover': { backgroundColor: mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : '#e1e1e1' },
+                  }}
+                  onClick={handleOpenFeedback}
+                >
+                  <FeedbackOutlinedIcon sx={{ fontSize: '24px', color: mode === 'dark' ? '#c4c7c5' : '#444746' }} />
+                </IconButton>
+              </Tooltip>
             </Box>
-          </Toolbar>
-        </Container>
-      </AppBar>
+            
+            {/* Avatar */}
+            <Tooltip
+              slotProps={{
+                tooltip: {
+                  sx: {
+                    backgroundColor: mode === 'dark' ? '#3C4043' : '#56595C',
+                  },
+                },
+                popper: {
+                  modifiers: [{ name: 'offset', options: { offset: [0, -10] } }],
+                },
+              }}
+              title={
+              <Box sx={{ textAlign: 'left', fontFamily: '"Roboto", arial, sans-serif' }}>
+                <Typography sx={{ fontSize: '0.8rem', fontWeight: 500, fontFamily: 'inherit', color: '#FFFFFF' }}>Google Account</Typography>
+                <Typography sx={{ fontSize: '0.75rem', fontFamily: 'inherit', color: mode === 'dark' ? '#9AA0A6' : '#BFC4C7' }}>{name}</Typography>
+                <Typography sx={{ fontSize: '0.75rem', fontFamily: 'inherit', color: mode === 'dark' ? '#9AA0A6' : '#BFC4C7' }}>{email}</Typography>
+              </Box>
+            }>
+              <IconButton onClick={handleOpenUserMenu} sx={{
+                p: '4px',
+                borderRadius: '50%',
+                transition: 'background-color 0.2s',
+                '&:hover': { backgroundColor: mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : '#e1e1e1' },
+              }} aria-label="Open settings">
+                <Avatar
+                  alt={name ?? ""}
+                  src={picture ?? ""}
+                  sx={{
+                    width: "2rem", // 32px
+                    height: "2rem", // 32px
+                    borderRadius: "50%"
+                  }}
+                />
+              </IconButton>
+            </Tooltip>
+            <UserAccountDropdown
+              anchorEl={anchorElUser}
+              open={Boolean(anchorElUser)}
+              onClose={handleCloseUserMenu}
+            />
+          </Box>
+        </Toolbar>
+      </Container>
+    </AppBar>
 
-      {/* Send Feedback Panel */}
-      <SendFeedback
-        isOpen={openFeedback}
-        onClose={handleCloseFeedback}
-        onSubmitSuccess={handleSendFeedbackSuccess}
-      />
-
-      {/* Notification Bar */}
-      <NotificationBar
-        isVisible={isNotificationVisible}
-        onClose={handleCloseNotification}
-        onUndo={handleUndoNotification}
-        message={notificationMessage}
-      />
-    </>
+    {/* Send Feedback Panel */}
+          <SendFeedback
+            isOpen={openFeedback}
+            onClose={handleCloseFeedback}
+            onSubmitSuccess={handleSendFeedbackSuccess}
+          />
+    
+          {/* Notification Bar */}
+          <NotificationBar
+            isVisible={isNotificationVisible}
+            onClose={handleCloseNotification}
+            onUndo={handleUndoNotification}
+            message={notificationMessage}
+          />
+        </>
+    
   );
 }
 export default Navbar;

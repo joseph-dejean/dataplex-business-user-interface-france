@@ -11,10 +11,13 @@ build/
 **/dist/
 **/build/
 
-# Environment files (use Cloud Build substitutions instead)
+# Environment files
 .env
 .env.*
 !.env.example
+deploy.env
+deployment/config.env
+deployment/deploy.env
 
 # Git
 .git/
@@ -37,23 +40,14 @@ Thumbs.db
 coverage/
 .nyc_output/
 
-# Docker (not needed for Cloud Build)
-Dockerfile*
-.dockerignore
-
-# CI/CD configs (Cloud Build uses cloudbuild.yaml)
+# CI/CD configs
 .gitlab-ci.yml
 .travis.yml
 
-.env
-.env.local
-.env.development.local
+# Misc
 stats.html
-.git
-.vscode
 .cache
 .npm
 .gemini
 .codeoss
-node_modulesvenv
-EOF
+venv/

@@ -15,10 +15,10 @@ import {
   MenuItem,
   ListItemText,
   Checkbox,
-  CircularProgress,
   TextField,
   InputAdornment,
-  Tooltip
+  Tooltip,
+  Drawer
 } from '@mui/material';
 import {
   ExpandLess,
@@ -29,10 +29,12 @@ import {
   InfoOutline,
 } from '@mui/icons-material';
 import DataProfileConfigurationsPanel from './DataProfileConfigurationsPanel';
+import DataProfileSkeleton from './DataProfileSkeleton';
 import { useAuth } from '../../auth/AuthProvider';
 import { useDispatch, useSelector } from 'react-redux';
 import type { AppDispatch } from '../../app/store';
 import { fetchDataScan, selectScanData, selectScanStatus, selectIsScanLoading } from '../../features/dataScan/dataScanSlice';
+import { useAccessRequest } from '../../contexts/AccessRequestContext';
 
 /**
  * @file DataProfile.tsx
@@ -90,14 +92,17 @@ interface ProfileData {
   }>;
 }
 interface DataProfileProps {
-  scanName: any;
+  scanName: string | null;
+  allScansStatus: string;
 }
 
-const DataProfile: React.FC<DataProfileProps> = ({ scanName }) => {
+const DataProfile: React.FC<DataProfileProps> = ({ scanName, allScansStatus }) => {
+  const isParentLoading = allScansStatus !== 'succeeded';
 
   const { user } = useAuth();
   const id_token = user?.token || '';
   const dispatch = useDispatch<AppDispatch>();
+  const { setAccessPanelOpen } = useAccessRequest();
   const [loading, setLoading] = useState<boolean>(true);
   const [dataProfileAvailable, setDataProfileAvailable] = useState<boolean>(false);
 
@@ -166,6 +171,11 @@ const DataProfile: React.FC<DataProfileProps> = ({ scanName }) => {
   const [activeFilters, setActiveFilters] = useState<Array<{property: string, values: string[]}>>([]);
   const [sortColumn, setSortColumn] = useState<string>('');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc' | null>(null);
+
+  // Sync configurations panel state with global context for z-index management
+  useEffect(() => {
+    setAccessPanelOpen(isConfigurationsOpen);
+  }, [isConfigurationsOpen, setAccessPanelOpen]);
 
   // Dummy data based on Figma design
   const profileData: ProfileData[] = [];
@@ -396,43 +406,13 @@ const DataProfile: React.FC<DataProfileProps> = ({ scanName }) => {
     return sortDirection === 'asc' ? <ArrowUpward sx={{ fontSize: '16px' }} /> : <ArrowDownward sx={{ fontSize: '16px' }} />;
   };
 
-  return loading ? (
-    <Box sx={{
-        flex: 1,
-        backgroundColor: '#ffffff',
-        borderRadius: '8px',
-        border: '1px solid #DADCE0',
-        overflow: 'hidden',
-        marginTop: '20px',
-        display: 'flex',
-        justifyContent: 'center', 
-        alignItems: 'center',
-        minHeight: '500px'
-      }}>
-      <CircularProgress />
-    </Box>
+  return (loading || isScanLoading || isParentLoading) ? (
+    <DataProfileSkeleton />
   ) : (dataProfileAvailable && profileData.length > 0 ? (
         <Box sx={{
           flex: 1,
           position: 'relative',
-          marginTop: '20px',
         }}>
-          {/* Dark overlay when configurations panel is open */}
-          {isConfigurationsOpen && (
-            <Box 
-              onClick={() => setIsConfigurationsOpen(false)}
-              sx={{
-                position: 'fixed',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                backgroundColor: 'rgba(0, 0, 0, 0.5)',
-                zIndex: 1000,
-                cursor: 'pointer'
-              }} 
-            />
-          )}
           <Box sx={{
             backgroundColor: '#ffffff',
             borderRadius: '8px',
@@ -790,8 +770,8 @@ const DataProfile: React.FC<DataProfileProps> = ({ scanName }) => {
                 )}
               </Menu>
               {/* Table */}
-              <TableContainer sx={{ 
-                maxHeight: 'calc(100vh - 260px)', 
+              <TableContainer sx={{
+                maxHeight: 'calc(100vh - 380px)',
                 overflow: 'auto', 
                 border: '1px solid #DADCE0', 
                 borderBottomRightRadius: '8px', 
@@ -1272,11 +1252,23 @@ const DataProfile: React.FC<DataProfileProps> = ({ scanName }) => {
               </TableContainer>
             </Box>
           </Collapse>
-          <DataProfileConfigurationsPanel
-            isOpen={isConfigurationsOpen}
+          <Drawer
+            anchor="right"
+            open={isConfigurationsOpen}
             onClose={() => setIsConfigurationsOpen(false)}
-            dataProfileScan={dataProfileScan}
-          />
+            PaperProps={{
+              sx: {
+                width: '612px',
+                backgroundColor: '#ffffff',
+                boxShadow: '-4px 0px 8px rgba(0, 0, 0, 0.1)',
+              }
+            }}
+          >
+            <DataProfileConfigurationsPanel
+              onClose={() => setIsConfigurationsOpen(false)}
+              dataProfileScan={dataProfileScan}
+            />
+          </Drawer>
           </Box>
         </Box>
       ) : (
@@ -1286,9 +1278,8 @@ const DataProfile: React.FC<DataProfileProps> = ({ scanName }) => {
         borderRadius: '8px',
         border: '1px solid #DADCE0',
         overflow: 'hidden',
-        marginTop: '20px',
         display: 'flex',
-        justifyContent: 'center', 
+        justifyContent: 'center',
         alignItems: 'center',
         minHeight: '500px'
       }}>

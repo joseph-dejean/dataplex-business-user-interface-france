@@ -1,0 +1,9 @@
+﻿M	README.md
+M	backend/server.js
+M	backend/services/adminService.js
+M	src/auth/AuthProvider.tsx
+M	src/component/AdminPanel/AdminAccessManagement.tsx
+M	src/component/Navbar/Navbar.tsx
+M	src/features/admin/adminSlice.ts
+M	src/features/resources/resourcesSlice.ts
+M	src/types/User.ts
