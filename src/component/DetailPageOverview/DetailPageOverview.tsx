@@ -747,6 +747,11 @@ const { date: updateDateShort, time: updateTimeShort } = formatTimeNoSeconds(ent
                   </Box>
                 )}
 
+                {/* Insights (Table Documentation Scans) */}
+                {isBqTable && (
+                  <InsightsPanel entryName={entry?.name} fullyQualifiedName={entry?.fullyQualifiedName} />
+                )}
+
                 {/* Documentation */}
                 <Box sx={{
                     display: "flex",

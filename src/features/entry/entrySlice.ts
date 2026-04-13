@@ -202,5 +202,5 @@ export const entrySlice = createSlice({
   },
 });
 
-export const { setEntry, pushToHistory, popFromHistory, clearHistory, resetAccessCheck } = entrySlice.actions;
+export const { setEntry, setLineageToEntryCopy, pushToHistory, popFromHistory, clearHistory, resetAccessCheck } = entrySlice.actions;
 export default entrySlice.reducer;
