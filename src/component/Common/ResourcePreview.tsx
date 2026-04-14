@@ -525,7 +525,7 @@ const ResourcePreview: React.FC<ResourcePreviewProps> = ({
 
             {/* BigQuery icon button */}
             {previewData.entrySource?.system?.toLowerCase() === 'bigquery' && (
-              <Tooltip title={entryStatus !== 'succeeded' ? "Loading link..." : "Open in BigQuery"} arrow>
+              <Tooltip title={isAccessDenied ? "You don't have access to this asset" : (entryStatus !== 'succeeded' ? "Loading link..." : "Open in BigQuery")} arrow>
                 <Box
                   component="button"
                   sx={{
@@ -538,17 +538,17 @@ const ResourcePreview: React.FC<ResourcePreviewProps> = ({
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    cursor: entryStatus !== 'succeeded' || !bigQueryUrl || demoMode ? 'default' : 'pointer',
+                    cursor: isAccessDenied || entryStatus !== 'succeeded' || !bigQueryUrl || demoMode ? 'default' : 'pointer',
                     padding: 0,
                     flexShrink: 0,
-                    opacity: entryStatus !== 'succeeded' || !bigQueryUrl || demoMode ? 0.4 : 1,
+                    opacity: isAccessDenied || entryStatus !== 'succeeded' || !bigQueryUrl || demoMode ? 0.4 : 1,
                     transition: 'background-color 0.2s ease',
-                    '&:hover': entryStatus === 'succeeded' && bigQueryUrl && !demoMode ? {
+                    '&:hover': !isAccessDenied && entryStatus === 'succeeded' && bigQueryUrl && !demoMode ? {
                       backgroundColor: mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.04)',
                     } : {},
                   }}
                   onClick={() => {
-                    if (entryStatus === 'succeeded' && bigQueryUrl && !demoMode) {
+                    if (!isAccessDenied && entryStatus === 'succeeded' && bigQueryUrl && !demoMode) {
                       window.open(bigQueryUrl, '_blank');
                     }
                   }}
@@ -564,7 +564,7 @@ const ResourcePreview: React.FC<ResourcePreviewProps> = ({
 
             {/* Looker icon button */}
             {previewData.entrySource?.system?.toLowerCase() === 'bigquery' && (
-              <Tooltip title={entryStatus !== 'succeeded' ? "Loading link..." : (demoMode ? "Disabled in Demo Mode" : "Explore with Looker Studio")} arrow>
+              <Tooltip title={isAccessDenied ? "You don't have access to this asset" : (entryStatus !== 'succeeded' ? "Loading link..." : (demoMode ? "Disabled in Demo Mode" : "Explore with Looker Studio"))} arrow>
                 <Box
                   component="button"
                   sx={{
@@ -577,17 +577,17 @@ const ResourcePreview: React.FC<ResourcePreviewProps> = ({
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    cursor: entryStatus !== 'succeeded' || !lookerUrl || demoMode ? 'default' : 'pointer',
+                    cursor: isAccessDenied || entryStatus !== 'succeeded' || !lookerUrl || demoMode ? 'default' : 'pointer',
                     padding: 0,
                     flexShrink: 0,
-                    opacity: entryStatus !== 'succeeded' || !lookerUrl || demoMode ? 0.4 : 1,
+                    opacity: isAccessDenied || entryStatus !== 'succeeded' || !lookerUrl || demoMode ? 0.4 : 1,
                     transition: 'background-color 0.2s ease',
-                    '&:hover': entryStatus === 'succeeded' && lookerUrl && !demoMode ? {
+                    '&:hover': !isAccessDenied && entryStatus === 'succeeded' && lookerUrl && !demoMode ? {
                       backgroundColor: mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.04)',
                     } : {},
                   }}
                   onClick={() => {
-                    if (entryStatus === 'succeeded' && lookerUrl && !demoMode) {
+                    if (!isAccessDenied && entryStatus === 'succeeded' && lookerUrl && !demoMode) {
                       window.open(lookerUrl, '_blank');
                     }
                   }}
