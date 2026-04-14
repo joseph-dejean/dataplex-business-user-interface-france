@@ -270,7 +270,14 @@ const SearchEntriesCard: React.FC<SearchEntriesCardProps> = ({ entry, sx, isSele
     const rawSystem = entry.entrySource.system ?? 'Custom';
     const SYSTEM_DISPLAY_NAMES: Record<string, string> = { "dataplex universal catalog": "Knowledge Catalog", "dataplex": "Knowledge Catalog" };
     setSystemName(SYSTEM_DISPLAY_NAMES[rawSystem.toLowerCase()] || rawSystem);
-    setEntryType(entry.entryType.split('-').length > 1 ? entry.entryType.split('-').pop() : entry.name.split('/').at(-2).charAt(0).toUpperCase() + entry.name.split('/').at(-2).slice(1));
+    const rawType = entry.entryType || '';
+    setEntryType(
+      rawType.includes('-')
+        ? (rawType.split('-').pop() || '')  // 'bigquery-table' → 'table' (capitalizeFirstLetter applied in render)
+        : (rawType && !rawType.includes('/') && !rawType.includes(':'))
+          ? rawType.toLowerCase()  // backend-normalized 'Table' → 'table' (capitalizeFirstLetter applied in render)
+          : (entry.name?.split('/').at(-2) || '')  // fallback from entry name path
+    );
     const myDate = (typeof entry.updateTime !== 'string') ? new Date(entry.updateTime.seconds * 1000) : new Date(entry.updateTime);
     const formattedDate = new Intl.DateTimeFormat('en-US', { month: "short" , day: "numeric", year: "numeric" }).format(myDate);
     setModifiedDate(formattedDate);

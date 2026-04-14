@@ -25,7 +25,6 @@ export const searchResourcesByTerm = createAsyncThunk('resources/searchResources
   try {
     let requestResourceData = {};
     axios.defaults.headers.common['Authorization'] = requestData.id_token ? `Bearer ${requestData.id_token}` : '';
-    axios.defaults.headers.common['x-user-email'] = requestData.userEmail || '';
     if(requestData.requestResourceData) {
       requestResourceData = requestData.requestResourceData;
     }else{ 
@@ -134,7 +133,9 @@ export const searchResourcesByTerm = createAsyncThunk('resources/searchResources
       // };
     }
     
-    const response = await axios.post(URLS.API_URL + URLS.SEARCH, requestResourceData);
+    const response = await axios.post(URLS.API_URL + URLS.SEARCH, requestResourceData, {
+      headers: { 'x-user-email': requestData.userEmail || '' },
+    });
     const data = await response.data;
     return {
       data: data.results,
