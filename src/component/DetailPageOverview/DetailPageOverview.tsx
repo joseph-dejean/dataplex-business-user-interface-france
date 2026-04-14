@@ -184,13 +184,15 @@ const DetailPageOverview: React.FC<DetailPageOverviewProps> = ({ entry, sampleTa
 
   // Navigate to another table in the same dataset from the relationship graph
   const handleRelationshipNodeClick = useCallback((tableName: string) => {
+    // ReactFlow may append ':N' suffix to deduplicate node IDs internally — strip it
+    const cleanTableName = tableName.replace(/:\d+$/, '');
     const fqn = entry?.fullyQualifiedName;
     if (!fqn) return;
     const fqnBody = fqn.replace('bigquery:', '');
     const parts = fqnBody.split('.');
     if (parts.length < 2) return;
     const [project, dataset] = parts;
-    const targetFqn = `bigquery:${project}.${dataset}.${tableName}`;
+    const targetFqn = `bigquery:${project}.${dataset}.${cleanTableName}`;
     dispatch(setLineageToEntryCopy(true));
     dispatch(fetchLineageEntry({ fqn: targetFqn, id_token: user?.token }));
     navigate('/view-details');

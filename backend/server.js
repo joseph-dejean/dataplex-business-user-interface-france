@@ -4583,20 +4583,11 @@ app.post('/api/v1/check-access', async (req, res) => {
       try {
         const bq = new BigQuery({ projectId: targetProject });
         const dataset = bq.dataset(datasetId);
-        const [policy] = await dataset.getIamPolicy();
-
-        const userMember = `user:${userEmail}`;
-        const hasDatasetAccess = policy.bindings?.some(binding => {
-          const meaningfulRoles = [
-            'roles/bigquery.dataViewer',
-            'roles/bigquery.dataEditor',
-            'roles/bigquery.dataOwner',
-            'roles/bigquery.admin',
-            'roles/viewer', 'roles/editor', 'roles/owner'
-          ];
-          return meaningfulRoles.includes(binding.role) && binding.members?.includes(userMember);
-        });
-
+        const [metadata] = await dataset.getMetadata();
+        const accessList = metadata.access || [];
+        const hasDatasetAccess = accessList.some(entry =>
+          entry.userByEmail?.toLowerCase() === userEmail.toLowerCase()
+        );
         if (hasDatasetAccess) {
           return res.json({ hasAccess: true, level: 'dataset' });
         }
@@ -4682,16 +4673,11 @@ app.get('/api/v1/check-entry-access', async (req, res) => {
       try {
         const bq = new BigQuery({ projectId: targetProject });
         const dataset = bq.dataset(datasetId);
-        const [policy] = await dataset.getIamPolicy();
-        const userMember = `user:${userEmail}`;
-        const hasDatasetAccess = policy.bindings?.some(binding => {
-          const meaningfulRoles = [
-            'roles/bigquery.dataViewer', 'roles/bigquery.dataEditor',
-            'roles/bigquery.dataOwner', 'roles/bigquery.admin',
-            'roles/viewer', 'roles/editor', 'roles/owner'
-          ];
-          return meaningfulRoles.includes(binding.role) && binding.members?.includes(userMember);
-        });
+        const [metadata] = await dataset.getMetadata();
+        const accessList = metadata.access || [];
+        const hasDatasetAccess = accessList.some(entry =>
+          entry.userByEmail?.toLowerCase() === userEmail.toLowerCase()
+        );
         if (hasDatasetAccess) {
           return res.json({ hasAccess: true, level: 'dataset' });
         }
