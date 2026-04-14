@@ -3013,8 +3013,11 @@ app.get('/api/v1/app-configs', async (req, res) => {
       const allAspects = aspectResults.flat();
       const uniqueAspectsMap = new Map();
       allAspects.forEach(aspect => {
-        if (aspect && aspect.name && !uniqueAspectsMap.has(aspect.name)) {
-          uniqueAspectsMap.set(aspect.name, aspect);
+        // searchEntries returns SearchResult objects where the entry name is
+        // nested under dataplexEntry.name, not at the top level.
+        const key = aspect?.dataplexEntry?.name || aspect?.name;
+        if (aspect && key && !uniqueAspectsMap.has(key)) {
+          uniqueAspectsMap.set(key, aspect);
         }
       });
       aspects = Array.from(uniqueAspectsMap.values());
