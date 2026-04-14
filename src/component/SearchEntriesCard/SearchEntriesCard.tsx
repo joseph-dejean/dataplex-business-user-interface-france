@@ -199,9 +199,15 @@ const SearchEntriesCard: React.FC<SearchEntriesCardProps> = ({ entry, sx, isSele
   const mode = useSelector((state: any) => state.user.mode) as string;
   const userEmail = useSelector((state: any) => state.user.userData?.email) as string | undefined;
   const accessCheckCache = useSelector((state: any) => state.entry.accessCheckCache) ?? {};
-  const entryAccessStatus = accessCheckCache[entry.name]?.status as string | undefined;
-  const isAccessConfirmed = entryAccessStatus === 'succeeded';
+  const entryAccessCached = accessCheckCache[entry.name] as { status?: string; hasAccess?: boolean } | undefined;
+  const entryAccessStatus = entryAccessCached?.status as string | undefined;
+  const isAccessConfirmed = entryAccessStatus === 'succeeded' && entryAccessCached?.hasAccess !== false;
   const isAccessLoading = entryAccessStatus === 'loading';
+  const entryUserHasAccessFlag = (entry as any)?.userHasAccess ?? (entry as any)?.dataplexEntry?.userHasAccess;
+  const isAccessDenied =
+    entryAccessStatus === 'failed' ||
+    (entryAccessStatus === 'succeeded' && entryAccessCached?.hasAccess === false) ||
+    entryUserHasAccessFlag === false;
   const hasBigQueryTable = entry.name && getEntryType(entry.name, '/') === 'Tables'
     && entry.entrySource?.system?.toLowerCase() === 'bigquery';
   const bigQueryLink = generateBigQueryLink(entry);
@@ -364,7 +370,7 @@ const SearchEntriesCard: React.FC<SearchEntriesCardProps> = ({ entry, sx, isSele
                     }}
                   />
                 ) : null}
-                {entryAccessStatus === 'failed' && (
+                {isAccessDenied && (
                   <Tooltip title="You don't have access to this asset" arrow placement="top">
                     <LockOutlined sx={{
                       position: 'absolute',
