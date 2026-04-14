@@ -16,7 +16,7 @@ import EntryList from '../EntryList/EntryList'
 import ShimmerLoader from '../Shimmer/ShimmerLoader'
 import type { AppDispatch } from '../../app/store'
 import { getSampleData } from '../../features/sample-data/sampleDataSlice'
-import { popFromHistory, pushToHistory, fetchEntry } from '../../features/entry/entrySlice'
+import { popFromHistory, pushToHistory, fetchEntry, checkEntryAccess } from '../../features/entry/entrySlice'
 import { fetchAllDataScans, selectAllScans, selectAllScansStatus } from '../../features/dataScan/dataScanSlice';
 import { useAuth } from '../../auth/AuthProvider'
 import { getName, getEntryType, generateBigQueryLink, hasValidAnnotationData, generateLookerStudioLink, getAssetIcon  } from '../../utils/resourceUtils'
@@ -419,6 +419,31 @@ useEffect(() => {
       triggerNoAccess({ message: entryError.message });
     }
   }, [entryStatus, entryError, triggerNoAccess]);
+
+  // Route-level access guard: when ViewDetails is reached directly (URL nav,
+  // back button, notification link), the card-click guards do not apply.
+  // Dispatch an explicit access check and block the page if access is denied.
+  const accessCheckCache = useSelector((state: any) => state.entry.accessCheckCache) ?? {};
+  useEffect(() => {
+    if (entryStatus !== 'succeeded' || !entry?.name || !id_token) return;
+    if (!accessCheckCache[entry.name]) {
+      dispatch(checkEntryAccess({ entryName: entry.name, id_token, userEmail: user?.email || '' }));
+    }
+  }, [entryStatus, entry?.name, id_token, user?.email]);
+
+  useEffect(() => {
+    if (entryStatus !== 'succeeded' || !entry?.name) return;
+    const cached = accessCheckCache[entry.name];
+    const userHasAccessFlag = (entry as any)?.userHasAccess;
+    const denied =
+      cached?.status === 'failed' ||
+      (cached?.status === 'succeeded' && cached.hasAccess === false) ||
+      userHasAccessFlag === false;
+    if (denied) {
+      triggerNoAccess({ message: "You don't have access to this resource" });
+      navigate('/search', { replace: true });
+    }
+  }, [entryStatus, entry, accessCheckCache, triggerNoAccess, navigate]);
 
   // Handle case where entry is already loaded from persistence
   useEffect(() => {

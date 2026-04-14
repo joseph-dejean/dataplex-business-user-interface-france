@@ -99,7 +99,7 @@ type EntryState = {
   lineageEntryError: string | undefined | unknown | null;
   lineageToEntryCopy: boolean;
   history: unknown[]; // Stack to track previous entries
-  accessCheckCache: Record<string, { status: 'loading' | 'succeeded' | 'failed'; error?: unknown }>;
+  accessCheckCache: Record<string, { status: 'loading' | 'succeeded' | 'failed'; hasAccess?: boolean; error?: unknown }>;
 };
 
 const initialState: EntryState = {
@@ -190,7 +190,8 @@ export const entrySlice = createSlice({
         state.accessCheckCache[action.meta.arg.entryName] = { status: 'loading' };
       })
       .addCase(checkEntryAccess.fulfilled, (state, action) => {
-        state.accessCheckCache[action.payload.entryName] = { status: 'succeeded' };
+        const hasAccess = (action.payload as any)?.data?.hasAccess !== false;
+        state.accessCheckCache[action.payload.entryName] = { status: 'succeeded', hasAccess };
       })
       .addCase(checkEntryAccess.rejected, (state, action) => {
         const entryName = (action.payload as any)?.entryName || action.meta.arg.entryName;

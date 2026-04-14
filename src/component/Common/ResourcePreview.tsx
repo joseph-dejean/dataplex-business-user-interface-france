@@ -127,12 +127,15 @@ const ResourcePreview: React.FC<ResourcePreviewProps> = ({
   const reduxEntryError = useSelector((state: any) => state.entry.error);
   const projectsList = useSelector((state: any) => state.projects.items);
   const accessCheckCache = useSelector((state: any) => state.entry.accessCheckCache) ?? {};
-  const entryAccessStatus = previewData?.name ? accessCheckCache[previewData.name]?.status : undefined;
+  const cachedAccess = previewData?.name ? accessCheckCache[previewData.name] : undefined;
   // Block View Details whenever the search-result userHasAccess flag is false,
-  // OR the explicit access check failed. userHasAccess can live at top level
-  // OR nested under dataplexEntry depending on which path produced previewData.
+  // OR the explicit access check returned hasAccess=false. userHasAccess can live
+  // at top level OR nested under dataplexEntry depending on which path produced previewData.
   const userHasAccessFlag = previewData?.userHasAccess ?? previewData?.dataplexEntry?.userHasAccess;
-  const isAccessDenied = entryAccessStatus === 'failed' || userHasAccessFlag === false;
+  const isAccessDenied =
+    cachedAccess?.status === 'failed' ||
+    (cachedAccess?.status === 'succeeded' && cachedAccess.hasAccess === false) ||
+    userHasAccessFlag === false;
 
   // Isolated preview hook (used in 'isolated' mode)
   const {
