@@ -3859,9 +3859,13 @@ Return JSON: {"dataplexQuery": "your optimized query string"}`;
         updateTime: entry.updateTime || coreEntry.updateTime || entry.modifyTime || coreEntry.modifyTime
       };
 
+      // Propagate userHasAccess onto the nested dataplexEntry too, since many
+      // consumers (e.g., <SearchEntriesCard entry={resource.dataplexEntry} />)
+      // only read from the nested object.
+      const normalizedWithAccess = { ...normalized, userHasAccess: hasAccess };
       return {
-        ...normalized,
-        dataplexEntry: normalized,
+        ...normalizedWithAccess,
+        dataplexEntry: normalizedWithAccess,
         userHasAccess: hasAccess
       };
     };
