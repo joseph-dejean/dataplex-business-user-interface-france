@@ -2444,52 +2444,57 @@ app.get('/api/v1/aspect/:urn', async (req, res) => {
  */
 app.get('/api/v1/get-entry-by-fqn', async (req, res) => {
   try {
-
-    let query = `fully_qualified_name=${req.query.fqn}`;
-
-    const projectId = PROJECT_ID;
-    const location = process.env.GCP_LOCATION;
-    // const accessToken = req.headers.authorization?.split(' ')[1]; // Expect
+    const fqn = req.query.fqn;
+    if (!fqn) {
+      return res.status(400).json({ message: 'fqn query parameter is required' });
+    }
+    const query = `fully_qualified_name=${fqn}`;
+    console.log(`[GET-ENTRY-BY-FQN] Looking up FQN: ${fqn}`);
 
     // ADC Auth
     const auth = new AdcGoogleAuth();
+    const dataplexClientv1 = new CatalogServiceClient({ auth });
 
-    const dataplexClientv1 = new CatalogServiceClient({
-      auth: auth,
-    });
+    // Search across all known projects in 'global' location (Dataplex catalog
+    // is region-agnostic for BQ entries — they live under locations/global).
+    // Falling back to GCP_LOCATION too in case of custom setups.
+    const allProjects = (typeof getAllProjects === 'function') ? getAllProjects() : [PROJECT_ID];
+    const locationsToTry = ['global', process.env.GCP_LOCATION].filter(Boolean);
 
-
-    if (!projectId || !location) {
-      return res.status(500).json({ message: 'Server Configuration Error: GOOGLE_CLOUD_PROJECT_ID and GCP_LOCATION must be set in the .env file.' });
+    let entryName = null;
+    for (const projId of allProjects) {
+      for (const loc of locationsToTry) {
+        try {
+          const request = {
+            name: `projects/${projId}/locations/${loc}`,
+            query,
+            pageSize: 5,
+          };
+          const [response] = await dataplexClientv1.searchEntries(request);
+          if (response && response.length > 0 && response[0].dataplexEntry?.name) {
+            entryName = response[0].dataplexEntry.name;
+            console.log(`[GET-ENTRY-BY-FQN] Found entry in ${projId}/${loc}: ${entryName}`);
+            break;
+          }
+        } catch (searchErr) {
+          console.warn(`[GET-ENTRY-BY-FQN] Search failed for ${projId}/${loc}: ${searchErr.message}`);
+        }
+      }
+      if (entryName) break;
     }
-
-    // Construct the request for the Dataplex API
-    const request = {
-      // The name of the project and location to search within
-      name: `projects/${projectId}/locations/${location}`,
-      query: query,
-      pageSize: 10, // Limit the number of results returned
-    };
-
-    console.log('Performing Dataplex search with query:', query);
-
-    // Call the searchEntries method of the Dataplex client
-    const [response] = await dataplexClientv1.searchEntries(request);
-
-
-    const entryName = response.length > 0 ? response[0].dataplexEntry.name : null; // Get entryName from query parameters
 
     if (!entryName) {
-      return res.status(500).json({ message: 'FQN is not provided or incorrect' });
+      console.warn(`[GET-ENTRY-BY-FQN] No entry found for FQN: ${fqn}`);
+      return res.status(404).json({ message: `No catalog entry found for FQN: ${fqn}` });
     }
 
-    // The getEntry method returns an entry.
-    const [entry] = await dataplexClientv1.getEntry({ name: entryName, view: protos.google.cloud.dataplex.v1.EntryView.ALL });
-
+    const [entry] = await dataplexClientv1.getEntry({
+      name: entryName,
+      view: protos.google.cloud.dataplex.v1.EntryView.ALL,
+    });
     res.json(entry);
-
   } catch (error) {
-    console.error('Error fetching entry', error);
+    console.error('[GET-ENTRY-BY-FQN] Error fetching entry', error);
     res.status(500).json({ message: 'An error occurred while fetching entry from Dataplex.', details: error.message });
   }
 });
@@ -3551,10 +3556,15 @@ app.post('/api/v1/get-dataset-entries', async (req, res) => {
  * Proxy Dataplex Search with Permission Filtering
  */
 
-// Helper: Check actual admin status using resolved logic
+// Helper: Check actual admin status using resolved logic.
+// IMPORTANT: Only super-admin / project-admin should bypass per-dataset IAM checks.
+// Data Stewards have admin UI capabilities (manage requests, etc.) but their
+// data access is still governed by BigQuery IAM, so they should NOT be treated
+// as "has access to everything" in search results.
 const checkUserAdminRole = async (userEmail) => {
   const role = await adminService.resolveAdminRole(userEmail);
-  return !!role;
+  if (!role) return false;
+  return role.role === 'super-admin' || role.role === 'project-admin';
 };
 
 /**
