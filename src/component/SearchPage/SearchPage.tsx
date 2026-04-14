@@ -57,6 +57,7 @@ const SearchPage: React.FC = () => {
   const searchFilters = useSelector((state: any) => state.search.searchFilters);
   const mode = useSelector((state: any) => state.user.mode) as string;
   const id_token = user?.token || '';
+  const userEmail = (user as any)?.email || '';
   const [previewData, setPreviewData] = useState<any | null>(null);
   const [filters, setFilters] = useState<any[]>(searchFilters || []);
   const [prevFilters, setPrevFilters] = useState<any[]>(searchFilters || []);
@@ -116,7 +117,7 @@ const SearchPage: React.FC = () => {
     dispatch({ type: 'resources/setItemsPageRequest', payload: null });
     dispatch({ type: 'resources/setItemsStoreData', payload: [] });
     if (searchTerm && searchTerm.trim() !== '') {
-      dispatch(searchResourcesByTerm({term : searchTerm, id_token: id_token, filters: filters, semanticSearch: semanticSearch}) );
+      dispatch(searchResourcesByTerm({term : searchTerm, id_token: id_token, userEmail: userEmail, filters: filters, semanticSearch: semanticSearch}) );
     }
     dispatch({ type: 'search/setSearchSubmitted', payload: false });
   }, []);
@@ -237,7 +238,7 @@ const SearchPage: React.FC = () => {
         }else if(requestResourceData != null){
           requestResourceData.pageSize = (start + size) - requestItemStore.length;
           dispatch({ type: 'resources/setItemsNextPageSize', payload: size });
-          dispatch(searchResourcesByTerm({ term:searchTerm, requestResourceData: requestResourceData, id_token: id_token, filters:filters, semanticSearch: semanticSearch }) );
+          dispatch(searchResourcesByTerm({ term:searchTerm, requestResourceData: requestResourceData, id_token: id_token, userEmail: userEmail, filters:filters, semanticSearch: semanticSearch }) );
         }
       }
     } else if (direction === 'previous') {

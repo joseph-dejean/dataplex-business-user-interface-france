@@ -83,6 +83,7 @@ const Navbar: React.FC<NavBarProps> = ({ searchBar = false, searchNavigate = tru
   const searchFilters = useSelector((state:any) => state.search.searchFilters);
   const semanticSearch = useSelector((state:any) => state.search.semanticSearch);
   const id_token = user?.token || '';
+  const userEmail = (user as any)?.email || '';
   const [isNotificationVisible, setIsNotificationVisible] = React.useState<boolean>(false);
   const [notificationMessage, setNotificationMessage] = React.useState<string>('');
   const handleLogoClick = () => {
@@ -177,7 +178,7 @@ const Navbar: React.FC<NavBarProps> = ({ searchBar = false, searchNavigate = tru
 
   const handleNavSearch = (text: string) => {
     dispatch({ type: 'resources/setItemsStoreData', payload: [] });
-    dispatch(searchResourcesByTerm({term : text, id_token: id_token, filters: searchFilters, semanticSearch: semanticSearch}));
+    dispatch(searchResourcesByTerm({term : text, id_token: id_token, userEmail: userEmail, filters: searchFilters, semanticSearch: semanticSearch}));
     searchNavigate && navigate('/search');
   }
 

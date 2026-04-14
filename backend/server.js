@@ -3573,9 +3573,8 @@ app.post('/api/v1/search', async (req, res) => {
     const isAdmin = await checkUserAdminRole(userEmail);
     console.log(`[SEARCH] Is Admin (User/IAM)? ${isAdmin}`);
 
-    // Use service account (default credentials) for catalog search so ALL authenticated
-    // users can discover metadata entries regardless of their BigQuery IAM access.
-    // Actual data access is enforced separately via check-entry-access.
+    // Use service account (default credentials) for catalog search — same as original code.
+    // This allows all authenticated users to discover catalog entries.
     const client = new CatalogServiceClient();
     const allProjects = getAllProjects();
     const location = 'global';

@@ -25,6 +25,7 @@ export const searchResourcesByTerm = createAsyncThunk('resources/searchResources
   try {
     let requestResourceData = {};
     axios.defaults.headers.common['Authorization'] = requestData.id_token ? `Bearer ${requestData.id_token}` : '';
+    axios.defaults.headers.common['x-user-email'] = requestData.userEmail || '';
     if(requestData.requestResourceData) {
       requestResourceData = requestData.requestResourceData;
     }else{ 
@@ -133,29 +134,13 @@ export const searchResourcesByTerm = createAsyncThunk('resources/searchResources
       // };
     }
     
-    // const response = await axios.post(URLS.API_URL + URLS.SEARCH, requestResourceData);
-    // const data = await response.data;
-    // return data;
-
-    const response = await axios.post(
-      `https://dataplex.googleapis.com/v1/projects/${import.meta.env.VITE_GOOGLE_PROJECT_ID}/locations/global:searchEntries`,
-      requestResourceData
-      // },
-      // {
-      //   headers: {
-      //     Authorization: `Bearer ${requestData.id_token}`,
-      //     'Content-Type': 'application/json',
-      //   },
-      // }
-    );
-
-    //console.log(response);
-    return response.status === 200 || response.status !== 401 ? {
-      data : response.data.results,
-      requestData: {...requestResourceData,pageToken: response.data.nextPageToken || ''},
-      results : response.data,
-    } : rejectWithValue('Token expired');
-    //return mockSearchData; // For testing, we return mock data
+    const response = await axios.post(URLS.API_URL + URLS.SEARCH, requestResourceData);
+    const data = await response.data;
+    return {
+      data: data.results,
+      requestData: { ...requestResourceData, pageToken: data.nextPageToken || '' },
+      results: data,
+    };
 
   } catch (error) {
     if (error instanceof AxiosError) {
