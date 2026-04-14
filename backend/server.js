@@ -3882,7 +3882,7 @@ Return JSON: {"dataplexQuery": "your optimized query string"}`;
       let hasProjectAccess = false;
       try {
         const resourceManager = new ProjectsClient();
-        const [policy] = await resourceManager.getIamPolicy({ resource: `projects/${projectId}` });
+        const [policy] = await resourceManager.getIamPolicy({ resource: `projects/${PROJECT_ID}` });
         const userMember = `user:${userEmail}`;
         const accessRoles = [
           'roles/owner', 'roles/editor', 'roles/viewer',

@@ -404,6 +404,12 @@ const ResourceViewer: React.FC<ResourceViewerProps> = ({
   const handleSearchEntriesDoubleClick = (clickedEntry: any) => {
     const isCurrentlyPreviewed = previewData && previewData.name === clickedEntry.name;
     const isAccessGranted = entryStatus === 'succeeded';
+    // Block double-click navigation when search marked the entry as no-access
+    const userHasAccessFlag = clickedEntry?.userHasAccess ?? clickedEntry?.dataplexEntry?.userHasAccess;
+    if (userHasAccessFlag === false) {
+      onPreviewDataChange(clickedEntry);
+      return;
+    }
 
     if (isCurrentlyPreviewed && isAccessGranted) {
       dispatch(clearHistory());
@@ -414,6 +420,12 @@ const ResourceViewer: React.FC<ResourceViewerProps> = ({
   };
 
   const handleNavigateToTab = (clickedEntry: any, tabName: string) => {
+    // Block tab-icon navigation when search marked the entry as no-access
+    const userHasAccessFlag = clickedEntry?.userHasAccess ?? clickedEntry?.dataplexEntry?.userHasAccess;
+    if (userHasAccessFlag === false) {
+      onPreviewDataChange(clickedEntry);
+      return;
+    }
     dispatch(clearHistory());
     dispatch(fetchEntry({ entryName: clickedEntry.name, id_token }));
     navigate('/view-details', { state: { tabName } });
