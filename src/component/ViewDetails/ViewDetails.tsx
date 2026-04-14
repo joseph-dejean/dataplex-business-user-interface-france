@@ -435,10 +435,14 @@ useEffect(() => {
     if (entryStatus !== 'succeeded' || !entry?.name) return;
     const cached = accessCheckCache[entry.name];
     const userHasAccessFlag = (entry as any)?.userHasAccess;
+    const entryTypeStr: string = (entry as any)?.entryType || '';
+    const isGlossaryLike = /glossary|category|term/i.test(entryTypeStr);
     const denied =
-      cached?.status === 'failed' ||
-      (cached?.status === 'succeeded' && cached.hasAccess === false) ||
-      userHasAccessFlag === false;
+      !isGlossaryLike && (
+        cached?.status === 'failed' ||
+        (cached?.status === 'succeeded' && cached.hasAccess === false) ||
+        userHasAccessFlag === false
+      );
     if (denied) {
       triggerNoAccess({ message: "You don't have access to this resource" });
       navigate('/search', { replace: true });

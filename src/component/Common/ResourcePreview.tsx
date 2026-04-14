@@ -132,10 +132,15 @@ const ResourcePreview: React.FC<ResourcePreviewProps> = ({
   // OR the explicit access check returned hasAccess=false. userHasAccess can live
   // at top level OR nested under dataplexEntry depending on which path produced previewData.
   const userHasAccessFlag = previewData?.userHasAccess ?? previewData?.dataplexEntry?.userHasAccess;
+  // Glossary / category / term entries are metadata-only — no access gating.
+  const previewEntryType: string = previewData?.entryType || previewData?.dataplexEntry?.entryType || '';
+  const isPreviewGlossaryLike = /glossary|category|term/i.test(previewEntryType);
   const isAccessDenied =
-    cachedAccess?.status === 'failed' ||
-    (cachedAccess?.status === 'succeeded' && cachedAccess.hasAccess === false) ||
-    userHasAccessFlag === false;
+    !isPreviewGlossaryLike && (
+      cachedAccess?.status === 'failed' ||
+      (cachedAccess?.status === 'succeeded' && cachedAccess.hasAccess === false) ||
+      userHasAccessFlag === false
+    );
 
   // Isolated preview hook (used in 'isolated' mode)
   const {

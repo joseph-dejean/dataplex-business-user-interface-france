@@ -204,10 +204,15 @@ const SearchEntriesCard: React.FC<SearchEntriesCardProps> = ({ entry, sx, isSele
   const isAccessConfirmed = entryAccessStatus === 'succeeded' && entryAccessCached?.hasAccess !== false;
   const isAccessLoading = entryAccessStatus === 'loading';
   const entryUserHasAccessFlag = (entry as any)?.userHasAccess ?? (entry as any)?.dataplexEntry?.userHasAccess;
+  // Glossary / category / term entries are metadata-only — access gating does not apply.
+  const rawEntryType: string = (entry as any)?.entryType || '';
+  const isGlossaryLike = /glossary|category|term/i.test(rawEntryType);
   const isAccessDenied =
-    entryAccessStatus === 'failed' ||
-    (entryAccessStatus === 'succeeded' && entryAccessCached?.hasAccess === false) ||
-    entryUserHasAccessFlag === false;
+    !isGlossaryLike && (
+      entryAccessStatus === 'failed' ||
+      (entryAccessStatus === 'succeeded' && entryAccessCached?.hasAccess === false) ||
+      entryUserHasAccessFlag === false
+    );
   const hasBigQueryTable = entry.name && getEntryType(entry.name, '/') === 'Tables'
     && entry.entrySource?.system?.toLowerCase() === 'bigquery';
   const bigQueryLink = generateBigQueryLink(entry);
