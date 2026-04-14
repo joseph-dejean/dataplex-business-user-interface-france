@@ -128,6 +128,8 @@ const ResourcePreview: React.FC<ResourcePreviewProps> = ({
   const projectsList = useSelector((state: any) => state.projects.items);
   const accessCheckCache = useSelector((state: any) => state.entry.accessCheckCache) ?? {};
   const entryAccessStatus = previewData?.name ? accessCheckCache[previewData.name]?.status : undefined;
+  // Use userHasAccess from search result as an immediate block (before async check resolves)
+  const isAccessDenied = entryAccessStatus === 'failed' || (previewData?.userHasAccess === false && entryAccessStatus !== 'succeeded');
 
   // Isolated preview hook (used in 'isolated' mode)
   const {
@@ -450,7 +452,7 @@ const ResourcePreview: React.FC<ResourcePreviewProps> = ({
           flex: '0 0 auto',
         }}>
           {/* View Details - full width */}
-          <Tooltip title={demoMode ? "Action disabled in demo mode" : (entryAccessStatus === 'failed' ? "Request access to view details" : (viewDetailAccessable ? "" : "You do not have permission to view details"))} arrow>
+          <Tooltip title={demoMode ? "Action disabled in demo mode" : (isAccessDenied ? "Request access to view details" : (viewDetailAccessable ? "" : "You do not have permission to view details"))} arrow>
             <Box
               component="button"
               sx={{
@@ -464,16 +466,16 @@ const ResourcePreview: React.FC<ResourcePreviewProps> = ({
                 fontFamily: '"Google Sans", sans-serif',
                 fontWeight: 600,
                 fontSize: 'var(--btn-font-size)',
-                cursor: viewDetailAccessable && !demoMode && entryAccessStatus !== 'failed' ? 'pointer' : 'default',
-                opacity: viewDetailAccessable && !demoMode && entryAccessStatus !== 'failed' ? 1 : 0.6,
+                cursor: viewDetailAccessable && !demoMode && !isAccessDenied ? 'pointer' : 'default',
+                opacity: viewDetailAccessable && !demoMode && !isAccessDenied ? 1 : 0.6,
                 textTransform: 'none',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
                 transition: 'background-color 0.2s ease',
-                '&:hover': viewDetailAccessable && !demoMode && entryAccessStatus !== 'failed' ? { backgroundColor: mode === 'dark' ? '#8fb8f0' : '#1A5CD8' } : {},
+                '&:hover': viewDetailAccessable && !demoMode && !isAccessDenied ? { backgroundColor: mode === 'dark' ? '#8fb8f0' : '#1A5CD8' } : {},
               }}
-              onClick={() => { if (viewDetailAccessable && !demoMode && entryAccessStatus !== 'failed') handleViewDetails(entry); }}
+              onClick={() => { if (viewDetailAccessable && !demoMode && !isAccessDenied) handleViewDetails(entry); }}
             >
               View Details
             </Box>

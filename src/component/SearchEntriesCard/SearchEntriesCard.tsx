@@ -297,6 +297,15 @@ const SearchEntriesCard: React.FC<SearchEntriesCardProps> = ({ entry, sx, isSele
     }
   }, [entry]);
 
+  // Trigger access check immediately when a card mounts so the lock icon
+  // appears without requiring the user to hover first.
+  useEffect(() => {
+    if (entry.name && !accessCheckCache[entry.name]) {
+      debouncedCheckAccess(entry.name, id_token, userEmail || '');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entry.name]);
+
   return (
     <>
       <Box sx={{
@@ -569,9 +578,7 @@ const SearchEntriesCard: React.FC<SearchEntriesCardProps> = ({ entry, sx, isSele
                     gap: '4px',
                     minWidth: '60px'
                   }}>
-                    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
-                      <path d="M10 2C7.79 2 6 3.79 6 6C6 8.21 7.79 10 10 10C12.21 10 14 8.21 14 6C14 3.79 12.21 2 10 2ZM10 4C11.1 4 12 4.9 12 6C12 7.1 11.1 8 10 8C8.9 8 8 7.1 8 6C8 4.9 8.9 4 10 4ZM10 11C7.33 11 2 12.34 2 15V17H18V15C18 12.34 12.67 11 10 11ZM10 13C12.97 13 16 14.29 16 15V15.99H4V15C4 14.29 7.03 13 10 13Z" fill="currentColor"/>
-                    </svg>
+                    <img src={DatasetIcon} alt="dataset" width="16" height="16" style={{ flexShrink: 0, opacity: 0.7 }} />
                     <span style={{
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
