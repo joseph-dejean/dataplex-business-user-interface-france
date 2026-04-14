@@ -605,7 +605,7 @@ const SearchEntriesCard: React.FC<SearchEntriesCardProps> = ({ entry, sx, isSele
               }}>
                 {/* Open in BigQuery */}
                 {entry.entrySource?.system?.toLowerCase() === 'bigquery' && (
-                  isAccessConfirmed ? (
+                  !isAccessDenied ? (
                     bigQueryLink ? (
                       <Tooltip title="Open in BigQuery" arrow placement="top">
                         <Box
@@ -674,7 +674,7 @@ const SearchEntriesCard: React.FC<SearchEntriesCardProps> = ({ entry, sx, isSele
 
                 {/* Explore with Looker Studio */}
                 {entry.entrySource?.system?.toLowerCase() === 'bigquery' && (
-                  isAccessConfirmed ? (
+                  !isAccessDenied ? (
                     lookerStudioLink ? (
                       <Tooltip title="Explore with Looker Studio" arrow placement="top">
                         <Box
@@ -742,7 +742,7 @@ const SearchEntriesCard: React.FC<SearchEntriesCardProps> = ({ entry, sx, isSele
                 )}
 
                 {/* Details Button */}
-                {isAccessConfirmed ? (
+                {!isAccessDenied ? (
                   <Box
                     onClick={(e: React.MouseEvent) => { e.stopPropagation(); dispatch(clearHistory()); dispatch(fetchEntry({ entryName: entry.name, id_token })); navigate('/view-details'); }}
                     sx={{
